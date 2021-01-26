@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// Copyright © 2020 Kent Gibson <warthog618@gmail.com>.
+// Copyright ÃÂ© 2020 Kent Gibson <warthog618@gmail.com>.
 
 // A simple example that watches an input pin and reports edge events.
 package main
@@ -36,7 +36,7 @@ func main() {
 	defer c.Close()
 
 	redButton := 8
-	blackButton := 22
+	blackButton := 20
 	r, err := c.RequestLine(redButton,
 		gpiod.WithBothEdges,
 		gpiod.WithEventHandler(eventHandler))
