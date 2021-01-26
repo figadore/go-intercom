@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: MIT
-//
-// Copyright ÃÂ© 2020 Kent Gibson <warthog618@gmail.com>.
 
 // A simple example that watches an input pin and reports edge events.
 package main
@@ -8,9 +6,11 @@ package main
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/warthog618/gpiod"
 )
 
@@ -35,8 +35,14 @@ func main() {
 	}
 	defer c.Close()
 
-	redButton := 8
-	blackButton := 20
+	var dotEnv map[string]string
+	dotEnv, e := godotenv.Read()
+	if e != nil {
+		panic(e)
+	}
+	redButton, _ := strconv.Atoi(dotEnv["RED_BUTTON_PIN"])
+	blackButton, _ := strconv.Atoi(dotEnv["BLACK_BUTTON_PIN"])
+	fmt.Printf("Found pin %d for black button in .env ...\n", blackButton)
 	r, err := c.RequestLine(redButton,
 		gpiod.WithBothEdges,
 		gpiod.WithEventHandler(eventHandler))

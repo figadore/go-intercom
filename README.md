@@ -1,16 +1,15 @@
 # Go Intercom (for Raspberry Pi)
 
 ## Build
-~gox~
-./build.sh
+`./build.sh`
 makefile?
 
 ## Deploy
-scp
+run `./deploy.sh <host>` to copy the binaries to the device
 
 ## Run
-copy <repo>.env.dist to <remote>:<dir>.env
+copy <repo>/.env.dist to <remote>:<dir>.env (currently only works with run.sh if at root of home)
 
 set variables in .env in the directory where binaries are deployed (see github.com/joho/godotenv)
 
-run `<dir>/gointercom-arm$(expr substr $(uname -m) 5 1)`
+run `./run.sh <host>` to run the binary through ssh
