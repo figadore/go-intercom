@@ -1,7 +1,8 @@
 package main
 
 import (
-	"context"
+	"fmt"
+	"io"
 	"log"
 	"net"
 
@@ -15,30 +16,42 @@ const (
 )
 
 func main() {
+	log.Printf("Booting")
+	fmt.Println("up")
 	lis, err := net.Listen("tcp", port)
+	fmt.Println("listening")
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
 	s := grpc.NewServer()
-	pb.RegisterGreeterServer(s, &server{})
+	fmt.Println("new server")
+	pb.RegisterReceiverServer(s, &server{})
+	fmt.Println("registered")
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
+	log.Printf("Started serve on port: %v", port)
 }
 
-// server is used to implement helloworld.GreeterServer.
+// "inherit" from unimplemented for future compatibility
 type server struct {
-	pb.UnimplementedGreeterServer
+	pb.UnimplementedReceiverServer
 }
 
-// SayHello implements helloworld.GreeterServer
-func (s *server) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
-	log.Printf("Received: %v", in.GetName())
-	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
-}
-
-// SayHello implements helloworld.GreeterServer
-func (s *server) SayHelloAgain(ctx context.Context, in *pb.HelloRequest) (*pb.HelloReply, error) {
-	log.Printf("Received: %v", in.GetName())
-	return &pb.HelloReply{Message: "Hello " + in.GetName()}, nil
+func (s *server) ButtonState(stream pb.Receiver_ButtonStateServer) error {
+	log.Printf("ButtonState entered")
+	count := 0
+	for {
+		stateChange, err := stream.Recv()
+		if err == io.EOF {
+			return stream.SendAndClose(&pb.ButtonChangeReply{
+				Message: fmt.Sprintf("success? %v state changes received", count),
+			})
+		}
+		if err != nil {
+			return err
+		}
+		log.Printf("Received: %v from %v", stateChange.GetPressed(), stateChange.GetButton())
+		count++
+	}
 }
