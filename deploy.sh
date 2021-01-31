@@ -1,4 +1,4 @@
 #!/bin/bash
 host=$1
 
-scp gointercom-arm* $host:~/
+scp compiled/* $host:~/

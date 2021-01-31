@@ -1,4 +1,5 @@
 #!/bin/bash
-host=$1
+clientserver=$1
+host=$2
 
-ssh $host '~/gointercom-arm$(expr substr $(uname -m) 5 1)'
+ssh -t $host "~/gointercom-${clientserver}_arm\$(expr substr \$(uname -m) 5 1)"
