@@ -36,7 +36,8 @@ func main() {
 	}
 
 	// Find out which pins we're working with
-	dotEnv, e := godotenv.Read()
+	var e error
+	dotEnv, e = godotenv.Read()
 	if e != nil {
 		panic(e)
 	}
@@ -56,6 +57,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stream, err := client.ButtonState(ctx)
+	if err != nil {
+		log.Fatalf("did not connect: %v", err)
+	}
 	fmt.Println("created client")
 
 	replyCh := make(chan string)
@@ -64,11 +68,9 @@ func main() {
 	eventHandler := eventClosure(stream, replyCh)
 	fmt.Println("requesting line")
 	lines, err := chip.RequestLines([]int{redButton, blackButton},
-		gpiod.WithDebounce(time.Millisecond*50),
+		gpiod.WithDebounce(time.Millisecond*30),
 		gpiod.WithBothEdges,
 		gpiod.WithEventHandler(eventHandler))
-	defer lines.Close()
-	fmt.Println("requested both lines")
 	if err != nil {
 		fmt.Printf("RequestLine returned error: %s\n", err)
 		if err == syscall.Errno(22) {
@@ -76,6 +78,8 @@ func main() {
 		}
 		os.Exit(1)
 	}
+	defer lines.Close()
+	fmt.Println("requested both lines")
 
 	fmt.Printf("Watching Pin %d...\n", redButton)
 	fmt.Printf("Watching Pin %d...\n", blackButton)
@@ -87,20 +91,14 @@ func main() {
 // Event handler needs access to the pb client, but the args can't be modified
 // so the closure adds it to the scope
 func eventClosure(stream pb.Receiver_ButtonStateClient, replyCh chan string) func(gpiod.LineEvent) {
-	// not sure why this needs to be read again
-	dotEnv, e := godotenv.Read()
-	if e != nil {
-		panic(e)
-	}
-	fmt.Println("read env")
-	closed := false
+	// closed := false
 	return func(evt gpiod.LineEvent) {
 		t := time.Now()
 		pressed := false
 		if evt.Type == gpiod.LineEventFallingEdge {
 			pressed = true
 		}
-		fmt.Printf("event:%3d %v, %-7s %s (%s)\n",
+		fmt.Printf("event:%3d, %v, %v, %-7s (%s)\n",
 			evt.Offset,
 			evt.Type,
 			pressed,
@@ -111,20 +109,27 @@ func eventClosure(stream pb.Receiver_ButtonStateClient, replyCh chan string) fun
 		if evt.Offset == redPin {
 			button = "red"
 		}
-		if !closed {
-			stream.Send(&pb.ButtonStateChange{Button: button, Pressed: pressed})
-			if evt.Offset == redPin && pressed {
-				// Stop processing additional events
-				closed = true
-				log.Printf("received red button, ending")
-				log.Printf("close and receive")
-				msg, err := stream.CloseAndRecv()
-				if err != nil {
-					log.Fatalf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
-				}
-				replyCh <- msg.Message
-				return
-			}
+		//if !closed {
+		//	err := stream.Send(&pb.ButtonStateChange{Button: button, Pressed: pressed})
+		//	if err != nil {
+		//		log.Fatalf("%v.Send() got error %v, want %v", stream, err, nil)
+		//	}
+		//	if evt.Offset == redPin && pressed {
+		//		// Stop processing additional events
+		//		closed = true
+		//		log.Printf("received red button, ending")
+		//		log.Printf("close and receive")
+		//		msg, err := stream.CloseAndRecv()
+		//		if err != nil {
+		//			log.Fatalf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
+		//		}
+		//		replyCh <- msg.Message
+		//		return
+		//	}
+		//}
+		err := stream.Send(&pb.ButtonStateChange{Button: button, Pressed: pressed})
+		if err != nil {
+			log.Fatalf("%v.Send() got error %v, want %v", stream, err, nil)
 		}
 	}
 }
