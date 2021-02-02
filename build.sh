@@ -12,17 +12,17 @@ GOOS=linux GOARCH=arm GOARM=7 go build -o compiled/gointercom_arm7
 echo "Created gointercom_arm7 binary"
 echo Complete
 
-echo "Building server for Raspberry Pi Zero W"
-GOOS=linux GOARCH=arm GOARM=6 go build -o compiled/gointercom-server_arm6 ./server/
-echo "Created gointercom-server_arm6 binary"
-echo "Building for Raspberry Pi 4"
-GOOS=linux GOARCH=arm GOARM=7 go build -o compiled/gointercom-server_arm7 ./server/
-echo "Created gointercom-server_arm7 binary"
-echo Complete
-echo "Building client for Raspberry Pi Zero W"
-GOOS=linux GOARCH=arm GOARM=6 go build -o compiled/gointercom-client_arm6 ./client/
-echo "Created gointercom-client_arm6 binary"
-echo "Building for Raspberry Pi 4"
-GOOS=linux GOARCH=arm GOARM=7 go build -o compiled/gointercom-client_arm7 ./client/
-echo "Created gointercom-client_arm7 binary"
-echo Complete
+#echo "Building server for Raspberry Pi Zero W"
+#GOOS=linux GOARCH=arm GOARM=6 go build -o compiled/gointercom-server_arm6 ./server/
+#echo "Created gointercom-server_arm6 binary"
+#echo "Building for Raspberry Pi 4"
+#GOOS=linux GOARCH=arm GOARM=7 go build -o compiled/gointercom-server_arm7 ./server/
+#echo "Created gointercom-server_arm7 binary"
+#echo Complete
+#echo "Building client for Raspberry Pi Zero W"
+#GOOS=linux GOARCH=arm GOARM=6 go build -o compiled/gointercom-client_arm6 ./client/
+#echo "Created gointercom-client_arm6 binary"
+#echo "Building for Raspberry Pi 4"
+#GOOS=linux GOARCH=arm GOARM=7 go build -o compiled/gointercom-client_arm7 ./client/
+#echo "Created gointercom-client_arm7 binary"
+#echo Complete
