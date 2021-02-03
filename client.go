@@ -38,6 +38,13 @@ func createClient(server string) {
 	lines := initializeButtons(eventHandler)
 	defer lines.Close()
 
+	audioCtx, cancel := context.WithCancel(context.Background())
+	audioStream, err := client.Audio(audioCtx)
+	if err != nil {
+		log.Fatalf("did not connect: %v", err)
+	}
+	go startStreaming(audioCtx, audioStream)
+
 	err = <-replyCh
 	if err != nil {
 		log.Fatalf("Error occurred: %v, exiting", err)

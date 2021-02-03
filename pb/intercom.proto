@@ -7,9 +7,10 @@ option java_outer_classname = "GoIntercomProto";
 
 package pb;
 
-// The greeting service definition.
+// The intercom receiver service definition.
 service Receiver {
   rpc ButtonState (stream ButtonStateChange) returns (ButtonChangeReply) {}
+  rpc Audio (stream AudioData) returns (stream AudioData) {}
 }
 
 // The request message containing the user's name.
@@ -22,3 +23,8 @@ message ButtonStateChange {
 message ButtonChangeReply {
   string message = 1;
 }
+
+message AudioData {
+  bytes data = 1;
+}
+
