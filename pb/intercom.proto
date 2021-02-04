@@ -25,6 +25,7 @@ message ButtonChangeReply {
 }
 
 message AudioData {
-  bytes data = 1;
+  //bytes data = 1;
+  repeated float data = 1;
 }
 

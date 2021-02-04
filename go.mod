@@ -6,6 +6,7 @@ require (
 	github.com/esimonov/ifshort v1.0.0 // indirect
 	github.com/golang/protobuf v1.4.2
 	github.com/golangci/golangci-lint v1.35.2 // indirect
+	github.com/jfreymuth/pulse v0.1.0
 	github.com/joho/godotenv v1.3.0
 	github.com/securego/gosec/v2 v2.6.1 // indirect
 	github.com/stretchr/testify v1.7.0 // indirect
