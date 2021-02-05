@@ -66,7 +66,7 @@ func (s *server) Audio(clientStream pb.Receiver_AudioServer) error {
 		stream: clientStream,
 	}
 	for {
-		bufferReader := readBufferClosure(playableBuffer)
+		bufferReader := readBufferClosure(&playableBuffer)
 		pulseStream, err := c.NewPlayback(pulse.Float32Reader(bufferReader), pulse.PlaybackLatency(.1))
 		if err != nil {
 			return err
@@ -91,7 +91,7 @@ type audioBuffer struct {
 	stream pb.Receiver_AudioServer
 }
 
-func (b audioBuffer) fill() error {
+func (b *audioBuffer) fill() error {
 	receivedBytes, err := b.stream.Recv()
 	if err == io.EOF {
 		return nil
@@ -104,7 +104,7 @@ func (b audioBuffer) fill() error {
 }
 
 // Give readBuffer function access to playableBuffer
-func readBufferClosure(playableBuffer audioBuffer) func([]float32) (int, error) {
+func readBufferClosure(playableBuffer *audioBuffer) func([]float32) (int, error) {
 	return func(speakerBytes []float32) (int, error) {
 		// Copy buffer so we can unlock and other processes can access it
 		playableBuffer.Lock()

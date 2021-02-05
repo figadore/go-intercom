@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"time"
 
@@ -39,11 +40,14 @@ func createClient(server string) {
 	defer lines.Close()
 
 	audioCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	audioStream, err := client.Audio(audioCtx)
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}
-	go startStreaming(audioCtx, audioStream)
+	if len(os.Args) > 1 {
+		go startStreaming(audioCtx, audioStream)
+	}
 
 	err = <-replyCh
 	if err != nil {
