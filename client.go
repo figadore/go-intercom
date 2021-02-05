@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jfreymuth/pulse"
 	"github.com/warthog618/gpiod"
 	"google.golang.org/grpc"
 
@@ -28,6 +29,7 @@ func createClient(server string) {
 	defer conn.Close()
 	client := pb.NewReceiverClient(conn)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer log.Println("canceling btnstate")
 	defer cancel()
 
 	stream, err := client.ButtonState(ctx)
@@ -45,13 +47,22 @@ func createClient(server string) {
 	if err != nil {
 		log.Fatalf("did not connect: %v", err)
 	}
-	if len(os.Args) > 1 {
-		go startStreaming(audioCtx, audioStream)
+	errCh := make(chan error)
+	if len(os.Args) > 2 {
+		go startStreaming(audioCtx, audioStream, errCh)
 	}
 
-	err = <-replyCh
-	if err != nil {
-		log.Fatalf("Error occurred: %v, exiting", err)
+	select {
+	case err = <-errCh:
+		if err != nil {
+			if err != pulse.EndOfData {
+				log.Fatalf("Error occurred: %v, exiting", err)
+			}
+		}
+	case err = <-replyCh:
+		if err != nil {
+			log.Fatalf("Error occurred: %v, exiting", err)
+		}
 	}
 }
 

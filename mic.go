@@ -10,17 +10,21 @@ import (
 	"github.com/jfreymuth/pulse"
 )
 
-func startStreaming(ctx context.Context, stream pb.Receiver_AudioClient) error {
+func startStreaming(ctx context.Context, stream pb.Receiver_AudioClient, errCh chan error) {
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			log.Printf("Context.Done: %v", ctx.Err())
+			errCh <- ctx.Err()
 
 		default:
-			err := sendAudio(stream)
+			i, err := sendAudio(stream)
 			if err != nil {
-				log.Printf("Error sending audio bytes: %v", err)
-				return err
+				if err == pulse.EndOfData {
+					log.Printf("End of streaming data: %v bytes", i)
+				} else {
+					errCh <- err
+				}
 			}
 		}
 	}
@@ -39,8 +43,8 @@ func (b *sendBuffer) fill() (int, error) {
 			return i, pulse.EndOfData
 		}
 		x := float32(math.Sin(2 * math.Pi * float64(phase)))
-		b.bytes[i] = x * 0.1
-		f := [...]float32{440, 550, 660, 880}[int(2*t)&3]
+		b.bytes[i] = x * 0.05
+		f := [...]float32{440, 550, 440, 880}[int(2*t)&3]
 		phase += f / 44100
 		if phase >= 1 {
 			phase--
@@ -50,20 +54,20 @@ func (b *sendBuffer) fill() (int, error) {
 	return len(b.bytes), nil
 }
 
-func sendAudio(stream pb.Receiver_AudioClient) error {
+func sendAudio(stream pb.Receiver_AudioClient) (int, error) {
 	micBuffer := sendBuffer{
 		bytes: make([]float32, 256),
 	}
-	_, err := micBuffer.fill()
+	i, err := micBuffer.fill()
 	if err != nil {
-		return err
+		return i, err
 	}
 	bytes := pb.AudioData{
 		Data: micBuffer.bytes,
 	}
 	err = stream.Send(&bytes)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return nil
+	return 0, nil
 }

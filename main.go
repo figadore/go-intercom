@@ -32,8 +32,11 @@ func main() {
 	done := make(chan bool)
 	go startServer(done)
 
+	log.Printf("Start with %v args", len(os.Args))
+	log.Printf("Arg 0: %v", os.Args[0])
+	log.Printf("Arg 1: %v", os.Args[1])
 	// Create a client for each ip address passed in
-	for _, serverAddr := range os.Args {
+	for _, serverAddr := range os.Args[1:] {
 		// Add retry logic, can't start client until server is up
 		go createClient(serverAddr)
 	}
