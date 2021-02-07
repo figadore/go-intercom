@@ -40,8 +40,9 @@ func newLedDisplay(chip *gpiod.Chip) *ledDisplay {
 	}
 }
 
-func (d *ledDisplay) IncomingCall(ctx context.Context, from string) {
-	d.UpdateStatus(statusIncomingCall)
+func (d *ledDisplay) IncomingCall(ctx context.Context, from string) error {
+	err := d.UpdateStatus(statusIncomingCall)
+	return err
 }
 
 func (d *ledDisplay) UpdateStatus(status int) error {

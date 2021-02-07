@@ -27,7 +27,7 @@ const (
 // Allow various ways to display status and other info
 // E.g. LEDs, TFT, text to speech
 type Outputs interface {
-	IncomingCall(ctx context.Context, from string)
+	IncomingCall(ctx context.Context, from string) error
 	UpdateStatus(status int) error
 	OutgoingCall(ctx context.Context, to string) error
 	Close()
@@ -36,9 +36,10 @@ type Outputs interface {
 // Allow various ways to interact with the intercom
 // E.g. buttons, menu with display, voice commands
 type Inputs interface {
-	acceptCall(ctx context.Context, from string)
-	placeCall(ctx context.Context, to []string)
-	hangup()
+	acceptCall(ctx context.Context, from string, callManager call.Manager)
+	placeCall(ctx context.Context, to []string, callManager call.Manager)
+	callAll(ctx context.Context, callManager call.Manager)
+	hangup(callManager call.Manager)
 	setVolume(percent int)
 	setDoNotDisturb(status int)
 	Close()

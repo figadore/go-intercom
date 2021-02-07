@@ -6,14 +6,14 @@ import (
 
 const (
 	// Bitmask to handle multiple simultaneous states
-	callStatusPending = 1 << iota
-	callStatusOngoing
+	CallStatusPending = 1 << iota
+	CallStatusOngoing
 )
 
 type Call struct {
-	to     string
-	from   string
-	status int
+	To     string
+	From   string
+	Status int
 }
 
 type Caller interface {

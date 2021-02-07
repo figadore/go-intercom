@@ -162,7 +162,7 @@ func (b *sendBuffer) fill() (int, error) {
 			return i, pulse.EndOfData
 		}
 		x := float32(math.Sin(2 * math.Pi * float64(phase)))
-		b.bytes[i] = x * 0.05
+		b.bytes[i] = x * 0.03
 		f := [...]float32{440, 550, 440, 880}[int(2*t)&3]
 		phase += f / 44100
 		if phase >= 1 {

@@ -16,19 +16,12 @@ import (
 )
 
 func main() {
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Println("Recovered in main", r)
-			os.Exit(1)
-		}
-	}()
 	// Handle externally generated OS exit signals
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
 	// Start a parent context that can stop child processes on global error (errCh)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// Create a global fatal error channel
 	errCh := make(chan error)
@@ -51,13 +44,14 @@ func main() {
 	go rpc.Serve(grpcServer, errCh)
 	// go grpcServer.serve(grpcServer, errCh, intercom)
 
+	defer cancel()
 	// Wait for errors or OS signals
 	for {
 		select {
 		case sig := <-sigCh:
 			msg := fmt.Sprintf("Received system signal: %v", sig)
 			log.Println(msg)
-			panic(errors.New(msg))
+			panic(msg)
 		case err := <-errCh:
 			log.Printf("Closing from error: %v", err)
 			panic(err)
