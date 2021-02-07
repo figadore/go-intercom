@@ -29,7 +29,7 @@ func newPhysicalInputs(ctx context.Context, chip *gpiod.Chip, dotEnv map[string]
 	blackButtonPin, _ := strconv.Atoi(dotEnv["BLACK_BUTTON_PIN"])
 	log.Printf("Found pin %d for black button in .env ...\n", blackButtonPin)
 	// Set up button lines
-	endCallButton, err := chip.RequestLine(redButtonPin,
+	groupCallButton, err := chip.RequestLine(blackButtonPin,
 		gpiod.WithDebounce(time.Millisecond*30),
 		gpiod.WithFallingEdge, // use WithBothEdges and a timer if long-press required
 		gpiod.WithEventHandler(func(_ gpiod.LineEvent) { callManager.CallAll(ctx) }))
@@ -37,7 +37,7 @@ func newPhysicalInputs(ctx context.Context, chip *gpiod.Chip, dotEnv map[string]
 		msg := fmt.Sprintf("RequestLine returned error: %s\n", err)
 		panic(msg)
 	}
-	groupCallButton, err := chip.RequestLine(blackButtonPin,
+	endCallButton, err := chip.RequestLine(redButtonPin,
 		gpiod.WithDebounce(time.Millisecond*30),
 		gpiod.WithFallingEdge,
 		gpiod.WithEventHandler(func(_ gpiod.LineEvent) { callManager.EndCalls() }))

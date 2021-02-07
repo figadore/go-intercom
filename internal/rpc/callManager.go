@@ -79,7 +79,10 @@ func (p *grpcCallManager) outgoingCall(parentContext context.Context, address st
 
 	select {
 	case <-parentContext.Done():
-		log.Printf("Parent context Done() with err: %v", err)
+		log.Printf("Parent context Done() with err: %v", parentContext.Err())
+		return
+	case <-ctx.Done():
+		log.Printf("Current context Done() with err: %v", ctx.Err())
 		return
 	case err = <-errCh:
 		if err != nil {
@@ -107,6 +110,7 @@ func startReceiving(ctx context.Context, stream pb.Intercom_DuplexCallClient, er
 		case <-ctx.Done():
 			log.Printf("Context.Done: %v", ctx.Err())
 			errCh <- ctx.Err()
+			return
 
 		default:
 			// TODO play received audio
@@ -118,6 +122,7 @@ func startReceiving(ctx context.Context, stream pb.Intercom_DuplexCallClient, er
 			}
 			if err != nil {
 				errCh <- err
+				return
 			}
 		}
 	}
@@ -135,6 +140,7 @@ func startStreaming(ctx context.Context, stream pb.Intercom_DuplexCallClient, er
 			if err != nil {
 				if err == pulse.EndOfData {
 					log.Printf("End of streaming data: %v bytes", i)
+					return
 				} else {
 					errCh <- err
 				}
