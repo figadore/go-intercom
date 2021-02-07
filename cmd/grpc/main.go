@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -36,16 +35,18 @@ func main() {
 	// Create a grpc call manager to create new clients for outgoing calls
 	callManager := rpc.NewCallManager()
 	intercom := station.New(ctx, dotEnv, callManager)
+	// Inject call manager so we can track and hang up calls initiated from other stations
 	callManager.SetStation(intercom)
 	defer intercom.Close()
 
 	// Start the main process
-	// TODO inject call manager so we can track and hang up calls initiated from other stations
 	go rpc.Serve(grpcServer, errCh)
-	// go grpcServer.serve(grpcServer, errCh, intercom)
 
+	// Do this last so that the context is cancelled *before* intercom.Close,
+	// which has eventHandlers running that will block until the handler exist
+	// The handler has a channel select on this context's Done() channel
 	defer cancel()
-	// Wait for errors or OS signals
+	// Run forever, but clean up on error or OS signals
 	for {
 		select {
 		case sig := <-sigCh:
@@ -55,9 +56,6 @@ func main() {
 		case err := <-errCh:
 			log.Printf("Closing from error: %v", err)
 			panic(err)
-			// case <-ctx.Done():
-			//	log.Println("Exiting cleanly")
-			//	return
 		}
 	}
 }

@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"os"
-	"sync"
 
 	"github.com/jfreymuth/pulse"
 	"google.golang.org/grpc"
@@ -128,65 +126,42 @@ func startReceiving(ctx context.Context, stream pb.Intercom_DuplexCallClient, er
 	}
 }
 
-func startStreaming(ctx context.Context, stream pb.Intercom_DuplexCallClient, errCh chan error) {
-	for {
-		select {
-		case <-ctx.Done():
-			log.Printf("Context.Done: %v", ctx.Err())
-			errCh <- ctx.Err()
+// func Write(p []byte) (n int, err error)
 
-		default:
-			i, err := sendAudio(stream)
-			if err != nil {
-				if err == pulse.EndOfData {
-					log.Printf("End of streaming data: %v bytes", i)
-					return
-				} else {
-					errCh <- err
-				}
-			}
-		}
+func startStreaming(ctx context.Context, stream pb.Intercom_DuplexCallClient, errCh chan error) {
+	c, err := pulse.NewClient()
+	if err != nil {
+		errCh <- err
+		return
 	}
+	defer c.Close()
+	b := sendBuffer{
+		pulseClient: c,
+		callClient:  stream,
+	}
+	micStream, err := c.NewRecord(pulse.Float32Writer(b.Write))
+	if err != nil {
+		log.Println("Unable to create new pulse recorder", err)
+		errCh <- err
+	}
+	micStream.Start()
+	defer micStream.Stop()
+	<-ctx.Done()
+	log.Printf("Context.Done: %v", ctx.Err())
+	errCh <- ctx.Err()
 }
 
 type sendBuffer struct {
-	sync.Mutex
-	bytes []float32
+	pulseClient *pulse.Client
+	callClient  pb.Intercom_DuplexCallClient
 }
 
-var t, phase float32
-
-func (b *sendBuffer) fill() (int, error) {
-	for i := range b.bytes {
-		if t > 4 {
-			return i, pulse.EndOfData
-		}
-		x := float32(math.Sin(2 * math.Pi * float64(phase)))
-		b.bytes[i] = x * 0.03
-		f := [...]float32{440, 550, 440, 880}[int(2*t)&3]
-		phase += f / 44100
-		if phase >= 1 {
-			phase--
-		}
-		t += 1. / 44100
+func (b sendBuffer) Write(p []float32) (n int, err error) {
+	c := b.callClient
+	data := pb.AudioData{
+		Data: p,
 	}
-	return len(b.bytes), nil
-}
-
-func sendAudio(stream pb.Intercom_DuplexCallClient) (int, error) {
-	micBuffer := sendBuffer{
-		bytes: make([]float32, 256),
-	}
-	i, err := micBuffer.fill()
-	if err != nil {
-		return i, err
-	}
-	bytes := pb.AudioData{
-		Data: micBuffer.bytes,
-	}
-	err = stream.Send(&bytes)
-	if err != nil {
-		return 0, err
-	}
-	return 0, nil
+	err = c.Send(&data)
+	n = len(p)
+	return
 }
