@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 
 	"github.com/jfreymuth/pulse"
 	"google.golang.org/grpc"
 
+	"github.com/figadore/go-intercom/internal/log"
 	"github.com/figadore/go-intercom/internal/rpc/pb"
 	"github.com/figadore/go-intercom/internal/station"
 	"github.com/figadore/go-intercom/pkg/call"
@@ -38,6 +38,8 @@ func (p *grpcCallManager) SetStation(s *station.Station) {
 }
 
 func (p *grpcCallManager) outgoingCall(parentContext context.Context, address string) {
+	log.Debugln("callManager.outgoingCall: enter")
+	defer log.Debugln("callManager.outgoingCall: exit")
 	fullAddress := fmt.Sprintf("192.168.0.%s%s", address, port)
 
 	err := p.station.Outputs.OutgoingCall(parentContext, address)
@@ -56,12 +58,13 @@ func (p *grpcCallManager) outgoingCall(parentContext context.Context, address st
 		log.Println(msg)
 		return
 	}
-	log.Println("dialed")
+	log.Debugln("dialed")
 	defer conn.Close()
 	client := pb.NewIntercomClient(conn)
 	ctx, cancel := context.WithCancel(parentContext)
-	defer log.Printf("canceling outgoing call to %v in defer", fullAddress)
+	defer log.Debugf("callManager.outoingCall: cancelled outgoing call to %v in defer", fullAddress)
 	defer cancel()
+	defer log.Debugf("callManager.outoingCall: cancelling outgoing call to %v in defer", fullAddress)
 
 	stream, err := client.DuplexCall(ctx)
 	if err != nil {
@@ -72,9 +75,42 @@ func (p *grpcCallManager) outgoingCall(parentContext context.Context, address st
 
 	errCh := make(chan error)
 
+	log.Debugln("callManager.outoingCall: starting streaming go routine")
 	go startStreaming(ctx, stream, errCh)
-	go startReceiving(ctx, stream, errCh)
+	bytesCh := make(chan float32, 256)
+	log.Debugln("callManager.outoingCall: starting receiving go routine")
+	go startReceiving(ctx, stream, bytesCh, errCh)
 
+	// setup speaker as receiver for data from server
+	c, err := pulse.NewClient()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer log.Debugln("callManager.outoingCall: closed pulse client")
+	defer c.Close()
+	defer log.Debugln("callManager.outoingCall: closing pulse client")
+	b := pulseCallReader{
+		pulseClient: c,
+		bytesCh:     bytesCh,
+	}
+	speakerStream, err := c.NewPlayback(pulse.Float32Reader(b.Read), pulse.PlaybackLatency(.1))
+	if err != nil {
+		log.Println("Unable to create new pulse recorder", err)
+		return
+	}
+	log.Debugln("callManager.outoingCall: start speakerStream")
+	go speakerStream.Start()
+	defer speakerStream.Close()
+	defer log.Debugln("callManager.outoingCall: drained speakerStream")
+	defer speakerStream.Drain()
+	defer log.Debugln("callManager.outoingCall: draining speakerStream")
+	if speakerStream.Error() != nil {
+		log.Println("Error:", speakerStream.Error())
+		return
+	}
+
+	log.Debugln("callManager.outoingCall: channel select")
 	select {
 	case <-parentContext.Done():
 		log.Printf("Parent context Done() with err: %v", parentContext.Err())
@@ -83,26 +119,32 @@ func (p *grpcCallManager) outgoingCall(parentContext context.Context, address st
 		log.Printf("Current context Done() with err: %v", ctx.Err())
 		return
 	case err = <-errCh:
+		log.Debugln("callManager.outoingCall: channel select")
 		if err != nil {
 			if err != pulse.EndOfData {
-				log.Fatalf("Error occurred: %v, exiting", err)
+				log.Printf("Error occurred: %v, exiting", err)
 			}
 		}
 	case err = <-replyCh:
+		log.Debugln("callManager.outgoingCall: replyCh received", err)
 		if err != nil {
-			log.Fatalf("Error occurred: %v, exiting", err)
+			log.Printf("Error occurred: %v, exiting", err)
 		}
 	}
 }
 
 func (p *grpcCallManager) CallAll(ctx context.Context) {
+	log.Debugln("callManager.CallAll: enter")
+	defer log.Debugln("callManager.CallAll: exit")
 	intercoms := os.Args[1:]
 	for _, address := range intercoms {
 		p.outgoingCall(ctx, address)
 	}
 }
 
-func startReceiving(ctx context.Context, stream pb.Intercom_DuplexCallClient, errCh chan error) {
+func startReceiving(ctx context.Context, stream pb.Intercom_DuplexCallClient, bytesCh chan float32, errCh chan error) {
+	log.Debugln("startReceiving: enter")
+	defer log.Debugln("startReceiving: exit")
 	for {
 		select {
 		case <-ctx.Done():
@@ -111,8 +153,8 @@ func startReceiving(ctx context.Context, stream pb.Intercom_DuplexCallClient, er
 			return
 
 		default:
-			// TODO play received audio
-			_, err := stream.Recv()
+			bytes, err := stream.Recv()
+			log.Debugln("startReceiving: stream.Recv'd")
 			if err == io.EOF {
 				log.Println("Received end of data from incoming connection")
 				// errCh <- nil
@@ -122,6 +164,12 @@ func startReceiving(ctx context.Context, stream pb.Intercom_DuplexCallClient, er
 				errCh <- err
 				return
 			}
+			// bytesCh <- bytes.Data
+			for _, b := range bytes.Data {
+				log.Debugln("startReceiving: sending to bytesCh")
+				bytesCh <- b
+				log.Debugln("startReceiving: sent to bytesCh")
+			}
 		}
 	}
 }
@@ -129,13 +177,17 @@ func startReceiving(ctx context.Context, stream pb.Intercom_DuplexCallClient, er
 // func Write(p []byte) (n int, err error)
 
 func startStreaming(ctx context.Context, stream pb.Intercom_DuplexCallClient, errCh chan error) {
+	log.Debugln("startStreaming: enter")
+	defer log.Debugln("startStreaming: exit")
 	c, err := pulse.NewClient()
 	if err != nil {
 		errCh <- err
 		return
 	}
+	defer log.Debugln("startStreaming: closed pulse client")
 	defer c.Close()
-	b := sendBuffer{
+	defer log.Debugln("startStreaming: closing pulse client")
+	b := pulseCallWriter{
 		pulseClient: c,
 		callClient:  stream,
 	}
@@ -144,19 +196,25 @@ func startStreaming(ctx context.Context, stream pb.Intercom_DuplexCallClient, er
 		log.Println("Unable to create new pulse recorder", err)
 		errCh <- err
 	}
+	log.Debugln("startStreaming: starting mic")
 	micStream.Start()
+	defer log.Debugln("startStreaming: closed micStream")
 	defer micStream.Stop()
+	defer log.Debugln("startStreaming: closing micStream")
+	log.Debugln("startStreaming: waiting until context is done")
 	<-ctx.Done()
 	log.Printf("Context.Done: %v", ctx.Err())
 	errCh <- ctx.Err()
 }
 
-type sendBuffer struct {
+type pulseCallWriter struct {
 	pulseClient *pulse.Client
 	callClient  pb.Intercom_DuplexCallClient
 }
 
-func (b sendBuffer) Write(p []float32) (n int, err error) {
+func (b pulseCallWriter) Write(p []float32) (n int, err error) {
+	log.Debugln("pulseCallWriter.Write: entered")
+	defer log.Debugln("pulseCallWriter.Write: exit")
 	c := b.callClient
 	data := pb.AudioData{
 		Data: p,

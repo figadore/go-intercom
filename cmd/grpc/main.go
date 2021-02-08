@@ -3,18 +3,20 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/joho/godotenv"
 
+	"github.com/figadore/go-intercom/internal/log"
 	"github.com/figadore/go-intercom/internal/rpc"
 	"github.com/figadore/go-intercom/internal/station"
 )
 
 func main() {
+	// Enable global debug logs
+	log.EnableDebug()
 	// Handle externally generated OS exit signals
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -37,7 +39,9 @@ func main() {
 	intercom := station.New(ctx, dotEnv, callManager)
 	// Inject call manager so we can track and hang up calls initiated from other stations
 	callManager.SetStation(intercom)
+	defer log.Debugln("main: Closed intercom")
 	defer intercom.Close()
+	defer log.Debugln("main: Closing intercom")
 
 	// Start the main process
 	go rpc.Serve(grpcServer, errCh)
@@ -45,7 +49,9 @@ func main() {
 	// Do this last so that the context is cancelled *before* intercom.Close,
 	// which has eventHandlers running that will block until the handler exist
 	// The handler has a channel select on this context's Done() channel
+	defer log.Debugln("Cancelled main context")
 	defer cancel()
+	defer log.Debugln("Cancelling main context")
 	// Run forever, but clean up on error or OS signals
 	for {
 		select {

@@ -3,10 +3,10 @@ package station
 import (
 	"context"
 	"fmt"
-	"log"
 	"strconv"
 	"time"
 
+	"github.com/figadore/go-intercom/internal/log"
 	"github.com/figadore/go-intercom/pkg/call"
 	"github.com/warthog618/gpiod"
 )
@@ -32,7 +32,11 @@ func newPhysicalInputs(ctx context.Context, chip *gpiod.Chip, dotEnv map[string]
 	groupCallButton, err := chip.RequestLine(blackButtonPin,
 		gpiod.WithDebounce(time.Millisecond*30),
 		gpiod.WithFallingEdge, // use WithBothEdges and a timer if long-press required
-		gpiod.WithEventHandler(func(_ gpiod.LineEvent) { input.callAll(ctx, callManager) }))
+		gpiod.WithEventHandler(func(_ gpiod.LineEvent) {
+			log.Debugln("group call handler: callAll")
+			defer log.Debugln("group call handler: completed callAll")
+			input.callAll(ctx, callManager)
+		}))
 	if err != nil {
 		msg := fmt.Sprintf("RequestLine returned error: %s\n", err)
 		panic(msg)
@@ -40,7 +44,11 @@ func newPhysicalInputs(ctx context.Context, chip *gpiod.Chip, dotEnv map[string]
 	endCallButton, err := chip.RequestLine(redButtonPin,
 		gpiod.WithDebounce(time.Millisecond*30),
 		gpiod.WithFallingEdge,
-		gpiod.WithEventHandler(func(_ gpiod.LineEvent) { input.hangup(callManager) }))
+		gpiod.WithEventHandler(func(_ gpiod.LineEvent) {
+			log.Debugln("end call handler: hangup")
+			defer log.Debugln("end call handler: completed hangup")
+			input.hangup(callManager)
+		}))
 	if err != nil {
 		msg := fmt.Sprintf("RequestLine returned error: %s\n", err)
 		log.Println(msg)
@@ -64,6 +72,8 @@ func (i *physicalInputs) placeCall(ctx context.Context, to []string, callManager
 
 func (i *physicalInputs) callAll(ctx context.Context, callManager call.Manager) {
 	// TODO set station output status?
+	log.Debugln("physicalInputs.callAll: enter")
+	defer log.Debugln("physicalInputs.callAll: exit")
 	callManager.CallAll(ctx)
 }
 
