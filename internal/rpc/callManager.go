@@ -101,21 +101,17 @@ func startReceiving(ctx context.Context, speakerCh chan<- float32, errCh chan er
 	for {
 		select {
 		case <-ctx.Done():
-			log.Debugln("startReceiving: context done")
 			if err := ctx.Err(); err != nil {
-				log.Debugln("startReceiving: context error", err)
 				errCh <- err
 			}
 			return
 		default:
 			break
 		}
-		log.Debugln("startReceiving: Recv")
 		in, err := recvFn()
 		if err == io.EOF {
 			return
 		} else if err != nil {
-			log.Debugln("startReceiving: error", err)
 			errCh <- err
 		}
 		for _, b := range in.Data {
@@ -130,9 +126,7 @@ func startSending(ctx context.Context, micCh <-chan float32, errCh chan error, s
 	for {
 		select {
 		case <-ctx.Done():
-			log.Debugln("startSending: context done")
 			if err := ctx.Err(); err != nil {
-				log.Debugln("startSending: context error", err)
 				// TODO find out how to close connection from here... send nil?
 				_ = sendFn(nil)
 				errCh <- err
@@ -144,7 +138,6 @@ func startSending(ctx context.Context, micCh <-chan float32, errCh chan error, s
 		for i := 0; i < 256; i++ {
 			d, ok := <-micCh
 			if !ok {
-				log.Debugln("startSending: micCh read error")
 				_ = sendFn(nil)
 				errCh <- errors.New("startSending: mic audio channel appears closed")
 				return
@@ -156,7 +149,6 @@ func startSending(ctx context.Context, micCh <-chan float32, errCh chan error, s
 		}
 		err := sendFn(&data)
 		if err != nil {
-			log.Debugln("startSending: sendFn", err)
 			errCh <- err
 			return
 		}
@@ -172,16 +164,12 @@ func (a audioBuffer) Read(buf []float32) (n int, err error) {
 	for n = range buf {
 		select {
 		case <-a.ctx.Done():
-			err := a.ctx.Err()
-			log.Debugln("audioBuffer.Read: context.done", err)
 			// return n, io.EOF
 			return n, pulse.EndOfData
 		case d, ok := <-a.audioCh:
 			if !ok {
-				log.Debugln("audioBuffer.Read: not ok receiving from audioCh", err)
 				return n, errors.New("speakerBuffer: audio channel appears closed")
 			}
-			log.Debugln("audioBuffer.Read: received from audioCh", err)
 			buf[n] = d
 		}
 	}
@@ -190,7 +178,6 @@ func (a audioBuffer) Read(buf []float32) (n int, err error) {
 
 func (a audioBuffer) Write(buf []float32) (n int, err error) {
 	for _, data := range buf {
-		log.Debugln("audioBuffer.Write")
 		a.audioCh <- data
 	}
 	return n, nil
@@ -211,9 +198,7 @@ func startPlayback(ctx context.Context, speakerBuf audioBuffer, errCh chan error
 	defer speakerStream.Close()
 	speakerStream.Start()
 	// Stream to speaker until context is cancelled
-	log.Debugln("startPlayback: waiting for context.Done()")
 	<-ctx.Done()
-	log.Debugln("startPlayback: context.Done()")
 	errCh <- ctx.Err()
 	if err != nil {
 		errCh <- err
@@ -247,9 +232,7 @@ func startRecording(ctx context.Context, micBuf audioBuffer, errCh chan error) {
 	}
 	defer micStream.Close()
 	micStream.Start() // async
-	log.Debugln("startRecording: waiting for context.Done()")
 	<-ctx.Done()
-	log.Debugln("startRecording: context.Done()")
 	err = ctx.Err()
 	if err != nil {
 		log.Debugln("Stopping speaker stream")
