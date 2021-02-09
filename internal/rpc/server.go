@@ -43,10 +43,12 @@ type Server struct {
 func (s *Server) DuplexCall(clientStream pb.Intercom_DuplexCallServer) error {
 	log.Debugln("Start server side DuplexCall")
 	ctx, cancel := context.WithCancel(context.Background())
+	log.Debugln("DuplexCall: context created")
 	defer cancel()
 	errCh := make(chan error)
 	audioInCh := make(chan float32, 256)
 	audioOutCh := make(chan float32, 256)
+	log.Debugln("DuplexCall: channels created")
 	speakerBuf := audioBuffer{
 		audioCh: audioInCh,
 		ctx:     ctx,
@@ -55,10 +57,12 @@ func (s *Server) DuplexCall(clientStream pb.Intercom_DuplexCallServer) error {
 		audioCh: audioOutCh,
 		ctx:     ctx,
 	}
+	log.Debugln("DuplexCall: buffers created")
 	go startReceiving(ctx, audioInCh, errCh, clientStream.Recv)
 	go startPlayback(ctx, speakerBuf, errCh)
 	go startRecording(ctx, micBuf, errCh)
 	go startSending(ctx, audioOutCh, errCh, clientStream.Send)
+	log.Debugln("DuplexCall: go routines started")
 	select {
 	case <-ctx.Done():
 		log.Printf("Server.DuplexCall: context.Done: %v", ctx.Err())
