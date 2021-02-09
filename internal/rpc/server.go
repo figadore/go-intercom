@@ -58,8 +58,8 @@ func (s *Server) DuplexCall(clientStream pb.Intercom_DuplexCallServer) error {
 	log.Debugln("DuplexCall: context created")
 	defer cancel()
 	errCh := make(chan error)
-	audioInCh := make(chan float32, 256)
-	audioOutCh := make(chan float32, 256)
+	audioInCh := make(chan []float32)
+	audioOutCh := make(chan []float32)
 	log.Debugln("DuplexCall: channels created")
 	ll := limlog.NewLimlog()
 	ll.SetLimiter("limiter1", 1, 1*time.Second, 6)
@@ -75,8 +75,8 @@ func (s *Server) DuplexCall(clientStream pb.Intercom_DuplexCallServer) error {
 	}
 	log.Debugln("DuplexCall: buffers created")
 	go startReceiving(ctx, audioInCh, errCh, clientStream.Recv)
-	go startPlayback(ctx, speakerBuf, errCh)
-	go startRecording(ctx, micBuf, errCh)
+	go startPlayback(ctx, &speakerBuf, errCh)
+	go startRecording(ctx, &micBuf, errCh)
 	go startSending(ctx, audioOutCh, errCh, clientStream.Send)
 	log.Debugln("DuplexCall: go routines started")
 	select {
