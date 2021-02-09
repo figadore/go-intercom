@@ -10,6 +10,7 @@ import (
 
 	"github.com/figadore/go-intercom/internal/log"
 	"github.com/figadore/go-intercom/internal/rpc/pb"
+	"github.com/figadore/go-intercom/pkg/call"
 )
 
 //type Server struct {
@@ -44,7 +45,16 @@ type Server struct {
 
 func (s *Server) DuplexCall(clientStream pb.Intercom_DuplexCallServer) error {
 	log.Debugln("Start server side DuplexCall")
-	ctx, cancel := context.WithCancel(context.Background())
+	address := "unknown"
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), call.ContextKey("address"), address))
+	currentCall := call.Call{
+		To:     "self",
+		From:   address,
+		Cancel: cancel,
+		Status: call.CallStatusActive,
+	}
+	callManager := NewCallManager()
+	callManager.callList = append(callManager.callList, currentCall)
 	log.Debugln("DuplexCall: context created")
 	defer cancel()
 	errCh := make(chan error)

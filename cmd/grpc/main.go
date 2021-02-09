@@ -52,10 +52,10 @@ func main() {
 	defer log.Debugln("Cancelled main context")
 	defer cancel()
 	defer log.Debugln("Cancelling main context")
+	//if len(os.Args) > 1 {
+	//	callManager.CallAll(ctx)
+	//}
 	// Run forever, but clean up on error or OS signals
-	if len(os.Args) > 1 {
-		callManager.CallAll(ctx)
-	}
 	for {
 		select {
 		case sig := <-sigCh:

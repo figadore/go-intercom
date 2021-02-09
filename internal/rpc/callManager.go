@@ -19,6 +19,11 @@ import (
 	"github.com/figadore/go-intercom/pkg/call"
 )
 
+const (
+	fragmentSize = 22050
+	sampleRate   = 44100
+)
+
 type grpcCallManager struct {
 	callList []call.Call
 	station  *station.Station
@@ -49,14 +54,23 @@ func (p *grpcCallManager) outgoingCall(parentContext context.Context, address st
 		log.Println(msg)
 		return
 	default:
+		break
 	}
-	ctx, cancel := context.WithCancel(parentContext)
+	ctx, cancel := context.WithCancel(context.WithValue(parentContext, call.ContextKey("address"), address))
 	defer cancel()
+	// TODO call.New()?
+	currentCall := call.Call{
+		To:     address,
+		From:   "self",
+		Cancel: cancel,
+		Status: call.CallStatusPending,
+	}
+	p.callList = append(p.callList, currentCall)
 	errCh := make(chan error)
-	audioInCh := make(chan float32, 256) // 256 is arbitrary
-	audioOutCh := make(chan float32, 256)
-	defer close(audioInCh)
-	defer close(audioOutCh)
+	audioInCh := make(chan float32, fragmentSize)
+	audioOutCh := make(chan float32, fragmentSize)
+	// defer close(audioInCh)
+	// defer close(audioOutCh)
 
 	// Initiate a grpc connection with the server
 	fullAddress := fmt.Sprintf("192.168.0.%s%s", address, port)
@@ -78,6 +92,8 @@ func (p *grpcCallManager) outgoingCall(parentContext context.Context, address st
 	defer func() { _ = serverStream.CloseSend() }() // doesn't return errors, always nil
 
 	ll := limlog.NewLimlog()
+	log.SetFlags(log.Ldate | log.Lmicroseconds)
+	log.SetOutput(os.Stdout)
 	ll.SetLimiter("bufreadwrite", 4, 1*time.Second, 6)
 	speakerBuf := audioBuffer{
 		audioCh: audioInCh,
@@ -97,6 +113,9 @@ func (p *grpcCallManager) outgoingCall(parentContext context.Context, address st
 	select {
 	case <-ctx.Done():
 		log.Printf("placeCall: context.Done: %v", ctx.Err())
+		return
+	case <-parentContext.Done():
+		log.Printf("warning: placeCall: parentContext.Done. didn't know this was possible: %v", ctx.Err())
 		return
 	case err := <-errCh:
 		log.Printf("placeCall: errCh: %v", err)
@@ -118,6 +137,7 @@ func startReceiving(ctx context.Context, speakerCh chan<- float32, errCh chan er
 			if err := ctx.Err(); err != nil {
 				log.Println("startReceiving: context error", ctx.Err())
 				errCh <- err
+				log.Println("startReceiving: sent context error", ctx.Err())
 			}
 			return
 		default:
@@ -133,9 +153,18 @@ func startReceiving(ctx context.Context, speakerCh chan<- float32, errCh chan er
 			return
 		}
 		for _, b := range in.Data {
-			ll.InfoL("sending to speakerCh")
-			speakerCh <- b
-			ll.InfoL("speakerCh sent")
+			select {
+			case <-ctx.Done():
+				log.Println("startReceiving/range: context done")
+				if err := ctx.Err(); err != nil {
+					log.Println("startReceiving/range: context error", ctx.Err())
+					errCh <- err
+					log.Println("startReceiving/range: sent context error", ctx.Err())
+				}
+				return
+			case speakerCh <- b:
+				ll.InfoL("startReceiving", "speakerCh sent")
+			}
 		}
 	}
 }
@@ -144,7 +173,7 @@ func startSending(ctx context.Context, micCh <-chan float32, errCh chan error, s
 	log.Println("startSending: enter")
 	defer log.Println("startSending: exit")
 	// to end streaming, send io.EOF and return
-	audioBytes := make([]float32, 256) // 256 is arbitrary
+	audioBytes := make([]float32, fragmentSize)
 	ll := limlog.NewLimlog()
 	ll.SetLimiter("startSending", 4, 1*time.Second, 6)
 	for {
@@ -162,7 +191,7 @@ func startSending(ctx context.Context, micCh <-chan float32, errCh chan error, s
 		default:
 			break
 		}
-		for i := 0; i < 256; i++ {
+		for i := 0; i < fragmentSize; i++ {
 			d, ok := <-micCh
 			if !ok {
 				msg := "startSending: mic audio channel appears closed"
@@ -177,9 +206,9 @@ func startSending(ctx context.Context, micCh <-chan float32, errCh chan error, s
 		data := pb.AudioData{
 			Data: audioBytes,
 		}
-		ll.InfoL("sending data to grpc")
+		ll.InfoL("startSending", "sending data to grpc")
 		err := sendFn(&data)
-		ll.InfoL("grpc data sent")
+		ll.InfoL("startSending", "grpc data sent")
 		if err != nil {
 			log.Println("startSending: error grpc sending", err)
 			errCh <- err
@@ -195,29 +224,60 @@ type audioBuffer struct {
 }
 
 func (a audioBuffer) Read(buf []float32) (n int, err error) {
+	start := time.Now()
 	for n = range buf {
 		select {
 		case <-a.ctx.Done():
 			// return n, io.EOF
+			close(a.audioCh)
 			return n, pulse.EndOfData
 		case d, ok := <-a.audioCh:
-			a.ll.InfoL("audioBuffer.Read received from audioCh")
+			a.ll.InfoL("bufreadwrite", "audioBuffer.Read received from audioCh")
 			if !ok {
-				return n, errors.New("speakerBuffer: audio channel appears closed")
+				log.Println("speakerBuffer: cannot receive, audio channel appears closed")
+				err = pulse.EndOfData
+				return
 			}
 			buf[n] = d
 		}
 	}
+	elapsed := time.Since(start)
+	log.Printf("audioBuffer.Read took %s to read %v bytes from audioCh", elapsed, n)
 	return
 }
 
+// Write sends the data from a passed-in buffer to the buffered audio channel
 func (a audioBuffer) Write(buf []float32) (n int, err error) {
-	a.ll.InfoL("audioBuffer.Write with this many float32s:", len(buf))
-	for i, data := range buf {
-		a.ll.InfoL("audioBuffer.Write sending to audioCh", i)
-		a.audioCh <- data
-		a.ll.InfoL("audioBuffer.Write sent")
+	a.ll.InfoL("bufreadwrite", "audioBuffer.Write with this many float32s:", len(buf))
+	if buf == nil {
+		msg := "audioBuffer.Write: nil buffer"
+		log.Println(msg)
+		return 0, errors.New(msg)
 	}
+	if len(buf) == 0 {
+		msg := "audioBuffer.Write: empty buffer"
+		log.Println(msg)
+		return 0, errors.New(msg)
+	}
+	// for n, data := range buf {
+	start := time.Now()
+	for n = 0; n < len(buf); n++ {
+		// still getting SIGBUS from somewhere in here
+		select {
+		case <-a.ctx.Done():
+			// return n, io.EOF
+			log.Println("no longer writing to audio buffer, context closed", a.ctx.Err())
+			// close(a.audioCh)
+			return n, pulse.EndOfData
+		default:
+			break
+		}
+		a.ll.InfoL("bufreadwrite", "audioBuffer.Write sending to audioCh", n)
+		a.audioCh <- buf[n]
+		a.ll.InfoL("bufreadwrite", "audioBuffer.Write sent")
+	}
+	elapsed := time.Since(start)
+	log.Printf("audioBuffer.Write took %s to send %v bytes to audioCh", elapsed, n)
 	return n, nil
 }
 
@@ -231,7 +291,7 @@ func startPlayback(ctx context.Context, speakerBuf audioBuffer, errCh chan error
 		return
 	}
 	defer c.Close()
-	speakerStream, err := c.NewPlayback(pulse.Float32Reader(speakerBuf.Read), pulse.PlaybackLatency(.1))
+	speakerStream, err := c.NewPlayback(pulse.Float32Reader(speakerBuf.Read), pulse.PlaybackSampleRate(sampleRate), pulse.PlaybackBufferSize(fragmentSize))
 	if err != nil {
 		log.Println("startPlayback: error creating speaker stream", err)
 		errCh <- err
@@ -258,6 +318,7 @@ func startPlayback(ctx context.Context, speakerBuf audioBuffer, errCh chan error
 		err = speakerStream.Error()
 		log.Println("startPlayback: speakerStream error", err)
 		errCh <- err
+		log.Println("startPlayback: sent speakerStream error", err)
 		return
 	}
 }
@@ -272,7 +333,7 @@ func startRecording(ctx context.Context, micBuf audioBuffer, errCh chan error) {
 		return
 	}
 	defer c.Close()
-	micStream, err := c.NewRecord(pulse.Float32Writer(micBuf.Write))
+	micStream, err := c.NewRecord(pulse.Float32Writer(micBuf.Write), pulse.RecordSampleRate(sampleRate), pulse.RecordBufferFragmentSize(fragmentSize))
 	if err != nil {
 		log.Println("startRecording: error creating new recorder", err)
 		errCh <- err
@@ -287,7 +348,9 @@ func startRecording(ctx context.Context, micBuf audioBuffer, errCh chan error) {
 	if err != nil {
 		log.Println("startRecording: context error", err)
 		micStream.Stop()
+		log.Println("startRecording: sending error", err)
 		errCh <- err
+		log.Println("startRecording: sent error", err)
 		return
 	}
 }

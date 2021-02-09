@@ -23,6 +23,7 @@ type physicalInputs struct {
 type Handlers map[string]func(gpiod.LineEvent)
 
 func newPhysicalInputs(ctx context.Context, chip *gpiod.Chip, dotEnv map[string]string, callManager call.Manager) *physicalInputs {
+	// TODO intercom.Close hangs on the client side when context cancelled, find a way to allow it to close
 	redButtonPin, _ := strconv.Atoi(dotEnv["RED_BUTTON_PIN"])
 	log.Printf("Found pin %d for red button in .env ...\n", redButtonPin)
 	blackButtonPin, _ := strconv.Atoi(dotEnv["BLACK_BUTTON_PIN"])
@@ -61,8 +62,11 @@ func newPhysicalInputs(ctx context.Context, chip *gpiod.Chip, dotEnv map[string]
 }
 
 func (i *physicalInputs) Close() {
+	log.Debugln("physicalInputs.Close: enter")
 	i.endCallButton.Close()
+	log.Debugln("physicalInputs.Closed endCallButton")
 	i.groupCallButton.Close()
+	log.Debugln("physicalInputs.Closed groupCallButton")
 }
 
 func (i *physicalInputs) acceptCall(ctx context.Context, from string, callManager call.Manager) {
