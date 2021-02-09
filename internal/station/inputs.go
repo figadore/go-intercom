@@ -47,6 +47,7 @@ func newPhysicalInputs(ctx context.Context, chip *gpiod.Chip, dotEnv map[string]
 		gpiod.WithEventHandler(func(_ gpiod.LineEvent) {
 			log.Debugln("end call handler: hangup")
 			defer log.Debugln("end call handler: completed hangup")
+			// TODO handle differently when calls active vs no calls
 			input.hangup(callManager)
 		}))
 	if err != nil {
