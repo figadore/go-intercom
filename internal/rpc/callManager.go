@@ -78,7 +78,7 @@ func (p *grpcCallManager) outgoingCall(parentContext context.Context, address st
 	defer func() { _ = serverStream.CloseSend() }() // doesn't return errors, always nil
 
 	ll := limlog.NewLimlog()
-	ll.SetLimiter("limiter1", 1, 1*time.Second, 6)
+	ll.SetLimiter("bufreadwrite", 4, 1*time.Second, 6)
 	speakerBuf := audioBuffer{
 		audioCh: audioInCh,
 		ctx:     ctx,
@@ -108,7 +108,7 @@ func startReceiving(ctx context.Context, speakerCh chan<- float32, errCh chan er
 	log.Println("startReceiving: enter")
 	defer log.Println("startReceiving: exit")
 	ll := limlog.NewLimlog()
-	ll.SetLimiter("limiter1", 1, 1*time.Second, 6)
+	ll.SetLimiter("startReceiving", 4, 1*time.Second, 6)
 	// log.SetPrefix("startReceiving: ")
 	// log.SetFlags(log.Ldate | log.Lmicroseconds)
 	for {
@@ -133,9 +133,9 @@ func startReceiving(ctx context.Context, speakerCh chan<- float32, errCh chan er
 			return
 		}
 		for _, b := range in.Data {
-			ll.DebugL("sending to speakerCh")
+			ll.InfoL("sending to speakerCh")
 			speakerCh <- b
-			ll.DebugL("speakerCh sent")
+			ll.InfoL("speakerCh sent")
 		}
 	}
 }
@@ -146,7 +146,7 @@ func startSending(ctx context.Context, micCh <-chan float32, errCh chan error, s
 	// to end streaming, send io.EOF and return
 	audioBytes := make([]float32, 256) // 256 is arbitrary
 	ll := limlog.NewLimlog()
-	ll.SetLimiter("limiter1", 1, 1*time.Second, 6)
+	ll.SetLimiter("startSending", 4, 1*time.Second, 6)
 	for {
 		select {
 		case <-ctx.Done():
@@ -177,9 +177,9 @@ func startSending(ctx context.Context, micCh <-chan float32, errCh chan error, s
 		data := pb.AudioData{
 			Data: audioBytes,
 		}
-		ll.DebugL("sending data to grpc")
+		ll.InfoL("sending data to grpc")
 		err := sendFn(&data)
-		ll.DebugL("grpc data sent")
+		ll.InfoL("grpc data sent")
 		if err != nil {
 			log.Println("startSending: error grpc sending", err)
 			errCh <- err
@@ -201,7 +201,7 @@ func (a audioBuffer) Read(buf []float32) (n int, err error) {
 			// return n, io.EOF
 			return n, pulse.EndOfData
 		case d, ok := <-a.audioCh:
-			a.ll.DebugL("audioBuffer.Read received from audioCh")
+			a.ll.InfoL("audioBuffer.Read received from audioCh")
 			if !ok {
 				return n, errors.New("speakerBuffer: audio channel appears closed")
 			}
@@ -212,11 +212,11 @@ func (a audioBuffer) Read(buf []float32) (n int, err error) {
 }
 
 func (a audioBuffer) Write(buf []float32) (n int, err error) {
-	a.ll.DebugL("audioBuffer.Write with this many float32s:", len(buf))
+	a.ll.InfoL("audioBuffer.Write with this many float32s:", len(buf))
 	for i, data := range buf {
-		a.ll.DebugL("audioBuffer.Write sending to audioCh", i)
+		a.ll.InfoL("audioBuffer.Write sending to audioCh", i)
 		a.audioCh <- data
-		a.ll.DebugL("audioBuffer.Write sent")
+		a.ll.InfoL("audioBuffer.Write sent")
 	}
 	return n, nil
 }
