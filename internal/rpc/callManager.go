@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	fragmentSize = 22050
-	sampleRate   = 44100
+	fragmentSize = 1600
+	sampleRate   = 8000
 )
 
 type grpcCallManager struct {
