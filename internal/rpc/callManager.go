@@ -6,10 +6,9 @@ import (
 	"io"
 	"log"
 	"os"
-	"sync"
-	"time"
+	//"sync"
+	"errors"
 
-	"github.com/jar-o/limlog"
 	"github.com/jfreymuth/pulse"
 	"google.golang.org/grpc"
 
@@ -20,7 +19,8 @@ import (
 )
 
 const (
-	fragmentSize = 22050
+	// fragmentSize = 44100 / 20
+	fragmentSize = 8820
 	sampleRate   = 44100
 )
 
@@ -91,19 +91,15 @@ func (p *grpcCallManager) outgoingCall(parentContext context.Context, address st
 	}
 	defer func() { _ = serverStream.CloseSend() }() // doesn't return errors, always nil
 
-	ll := limlog.NewLimlog()
 	log.SetFlags(log.Ldate | log.Lmicroseconds)
 	log.SetOutput(os.Stdout)
-	ll.SetLimiter("bufreadwrite", 4, 1*time.Second, 6)
 	speakerBuf := audioBuffer{
 		audioCh: audioInCh,
 		ctx:     ctx,
-		ll:      ll,
 	}
 	micBuf := audioBuffer{
 		audioCh: audioOutCh,
 		ctx:     ctx,
-		ll:      ll,
 	}
 
 	go startReceiving(ctx, audioInCh, errCh, serverStream.Recv)
@@ -126,8 +122,6 @@ func (p *grpcCallManager) outgoingCall(parentContext context.Context, address st
 func startReceiving(ctx context.Context, speakerCh chan<- []float32, errCh chan error, recvFn func() (*pb.AudioData, error)) {
 	log.Println("startReceiving: enter")
 	defer log.Println("startReceiving: exit")
-	ll := limlog.NewLimlog()
-	ll.SetLimiter("startReceiving", 4, 1*time.Second, 6)
 	// log.SetPrefix("startReceiving: ")
 	// log.SetFlags(log.Ldate | log.Lmicroseconds)
 	for {
@@ -152,9 +146,9 @@ func startReceiving(ctx context.Context, speakerCh chan<- []float32, errCh chan 
 			errCh <- err
 			return
 		}
-		ll.InfoL("startReceiving", "speakerCh sending")
-		speakerCh <- in.Data
-		ll.InfoL("startReceiving", "speakerCh sent")
+		data := make([]float32, len(in.Data))
+		copy(data, in.Data)
+		speakerCh <- data
 	}
 }
 
@@ -163,8 +157,8 @@ func startSending(ctx context.Context, micCh <-chan []float32, errCh chan error,
 	defer log.Println("startSending: exit")
 	// to end streaming, send io.EOF and return
 	var audioBytes []float32
-	ll := limlog.NewLimlog()
-	ll.SetLimiter("startSending", 4, 1*time.Second, 6)
+	var ok bool
+	var data pb.AudioData
 	for {
 		select {
 		case <-ctx.Done():
@@ -181,13 +175,30 @@ func startSending(ctx context.Context, micCh <-chan []float32, errCh chan error,
 			break
 		}
 		// TODO check for closed channel
-		audioBytes = <-micCh
-		data := pb.AudioData{
+		audioBytes, ok = <-micCh
+		if !ok {
+			msg := "startSending: error mic receiving from channel"
+			log.Println(msg)
+			errCh <- errors.New(msg)
+			return
+
+		}
+		if audioBytes == nil {
+			msg := "startSending: error, received nil from channel"
+			log.Println(msg)
+			errCh <- errors.New(msg)
+			return
+		}
+		if len(audioBytes) == 0 {
+			msg := "startSending: error, 0 bytes in audioBytes"
+			log.Println(msg)
+			errCh <- errors.New(msg)
+			return
+		}
+		data = pb.AudioData{
 			Data: audioBytes,
 		}
-		ll.InfoL("startSending", "sending data to grpc")
 		err := sendFn(&data)
-		ll.InfoL("startSending", "grpc data sent")
 		if err != nil {
 			log.Println("startSending: error grpc sending", err)
 			errCh <- err
@@ -197,11 +208,10 @@ func startSending(ctx context.Context, micCh <-chan []float32, errCh chan error,
 }
 
 type audioBuffer struct {
-	sync.Mutex
+	// sync.Mutex
 	audioCh  chan []float32
 	buffered []float32
 	ctx      context.Context
-	ll       *limlog.Limlog
 }
 
 //start := time.Now()
@@ -236,14 +246,14 @@ func (a *audioBuffer) Read(buf []float32) (n int, err error) {
 	default:
 		break
 	}
-	start := time.Now()
-	a.Lock()
-	defer a.Unlock()
+	// start := time.Now()
+	// a.Lock()
+	// defer a.Unlock()
 	if len(a.buffered) == 0 {
 		// blocking
-		a.Unlock()
+		// a.Unlock()
 		a.fill()
-		a.Lock()
+		// a.Lock()
 	}
 	copy(buf, a.buffered)
 	if len(a.buffered) >= len(buf) {
@@ -252,20 +262,20 @@ func (a *audioBuffer) Read(buf []float32) (n int, err error) {
 		n = len(a.buffered)
 	}
 	a.buffered = a.buffered[n:]
-	if len(a.buffered) < (fragmentSize / 2) {
-		// fill after this Read unlocks the buffer
-		go a.fill()
-	}
-	elapsed := time.Since(start)
-	log.Printf("audioBuffer.Read took %s to read %v bytes from audioCh", elapsed, n)
+	// pre-emptively fetch from the channel
+	//if len(a.buffered) < (fragmentSize / 2) {
+	//	go a.fill()
+	//}
+	//elapsed := time.Since(start)
+	// log.Printf("audioBuffer.Read took %s to read %v bytes from audioCh", elapsed, n)
 	return
 }
 
 func (a *audioBuffer) fill() {
 	// TODO check for closed channel
 	data := <-a.audioCh
-	a.Lock()
-	defer a.Unlock()
+	// a.Lock()
+	// defer a.Unlock()
 	a.buffered = append(a.buffered, data...)
 }
 
@@ -279,15 +289,14 @@ func (a *audioBuffer) Write(buf []float32) (n int, err error) {
 	default:
 		break
 	}
-	a.ll.InfoL("bufreadwrite", "audioBuffer. Write with this many float32s:", len(buf))
 	// for n, data := range buf {
-	start := time.Now()
-	a.ll.InfoL("bufreadwrite", "audioBuffer.Write sending to audioCh", n)
-	a.audioCh <- buf
-	a.ll.InfoL("bufreadwrite", "audioBuffer.Write sent")
-	elapsed := time.Since(start)
+	// start := time.Now()
+	data := make([]float32, len(buf))
+	copy(data, buf)
+	a.audioCh <- data
+	// elapsed := time.Since(start)
 	n = len(buf)
-	log.Printf("audioBuffer.Write took %s to send %v bytes to audioCh", elapsed, n)
+	// log.Printf("audioBuffer.Write took %s to send %v bytes to audioCh", elapsed, n)
 	return n, nil
 }
 

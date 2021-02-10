@@ -3,9 +3,7 @@ package rpc
 import (
 	"context"
 	"net"
-	"time"
 
-	"github.com/jar-o/limlog"
 	"google.golang.org/grpc"
 
 	"github.com/figadore/go-intercom/internal/log"
@@ -61,17 +59,13 @@ func (s *Server) DuplexCall(clientStream pb.Intercom_DuplexCallServer) error {
 	audioInCh := make(chan []float32)
 	audioOutCh := make(chan []float32)
 	log.Debugln("DuplexCall: channels created")
-	ll := limlog.NewLimlog()
-	ll.SetLimiter("limiter1", 1, 1*time.Second, 6)
 	speakerBuf := audioBuffer{
 		audioCh: audioInCh,
 		ctx:     ctx,
-		ll:      ll,
 	}
 	micBuf := audioBuffer{
 		audioCh: audioOutCh,
 		ctx:     ctx,
-		ll:      ll,
 	}
 	log.Debugln("DuplexCall: buffers created")
 	go startReceiving(ctx, audioInCh, errCh, clientStream.Recv)
