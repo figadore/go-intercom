@@ -2,12 +2,12 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
-	//"sync"
-	"errors"
+	"sync"
 
 	"github.com/jfreymuth/pulse"
 	"google.golang.org/grpc"
@@ -20,8 +20,8 @@ import (
 
 const (
 	// fragmentSize = 44100 / 20
-	fragmentSize = 8820
-	sampleRate   = 44100
+	fragmentSize = 1600
+	sampleRate   = 8000
 )
 
 type grpcCallManager struct {
@@ -177,7 +177,7 @@ func startSending(ctx context.Context, micCh <-chan []float32, errCh chan error,
 		// TODO check for closed channel
 		audioBytes, ok = <-micCh
 		if !ok {
-			msg := "startSending: error mic receiving from channel"
+			msg := "startSending: error mic receiving from channel (closed)"
 			log.Println(msg)
 			errCh <- errors.New(msg)
 			return
@@ -208,35 +208,12 @@ func startSending(ctx context.Context, micCh <-chan []float32, errCh chan error,
 }
 
 type audioBuffer struct {
-	// sync.Mutex
+	sync.Mutex
 	audioCh  chan []float32
 	buffered []float32
 	ctx      context.Context
 }
 
-//start := time.Now()
-//data := <-audioCh
-//for n = range buf {
-//	buf[n] = data[n]
-//}
-////needRead := false
-////if len(a.chOverflow) > 0 {
-////	if len(buf) > len(a.chOverflow) {
-////		needRead = true
-////	}
-////	for n = 0; n < len(buf) || n < len(chOverflow); n++ {
-////		buf[n] = a.chOverflow[n]
-////	}
-////	a.chOverflow = a.chOverflow[n:]
-////}
-////if needRead {
-////	remainingInBuf := len(buf) - n
-////	audioData := <-a.audioCh
-////	if len(audioData) > remainingInBuf {
-////		a.chOverflow = audioData[]
-////	}
-////}
-////buf[n] = d
 func (a *audioBuffer) Read(buf []float32) (n int, err error) {
 	select {
 	case <-a.ctx.Done():
@@ -248,13 +225,13 @@ func (a *audioBuffer) Read(buf []float32) (n int, err error) {
 	}
 	// start := time.Now()
 	// a.Lock()
-	// defer a.Unlock()
 	if len(a.buffered) == 0 {
 		// blocking
 		// a.Unlock()
 		a.fill()
 		// a.Lock()
 	}
+	// make a copy so we can unblock other processes
 	copy(buf, a.buffered)
 	if len(a.buffered) >= len(buf) {
 		n = len(buf)
@@ -262,11 +239,12 @@ func (a *audioBuffer) Read(buf []float32) (n int, err error) {
 		n = len(a.buffered)
 	}
 	a.buffered = a.buffered[n:]
+	//a.Unlock()
 	// pre-emptively fetch from the channel
 	//if len(a.buffered) < (fragmentSize / 2) {
 	//	go a.fill()
 	//}
-	//elapsed := time.Since(start)
+	// elapsed := time.Since(start)
 	// log.Printf("audioBuffer.Read took %s to read %v bytes from audioCh", elapsed, n)
 	return
 }
@@ -274,8 +252,8 @@ func (a *audioBuffer) Read(buf []float32) (n int, err error) {
 func (a *audioBuffer) fill() {
 	// TODO check for closed channel
 	data := <-a.audioCh
-	// a.Lock()
-	// defer a.Unlock()
+	a.Lock()
+	defer a.Unlock()
 	a.buffered = append(a.buffered, data...)
 }
 
