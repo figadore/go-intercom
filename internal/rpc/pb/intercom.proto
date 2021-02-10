@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+option go_package = "github.com/figadore/go-intercom/internal/rpc/pb";
+option java_multiple_files = true;
+option java_package = "com.github.figadore.go_intercom.rpc";
+option java_outer_classname = "GoIntercomProto";
+
+package pb;
+
+// The intercom receiver service definition.
+service Intercom {
+  rpc DuplexCall (stream AudioData) returns (stream AudioData) {}
+}
+
+message AudioData {
+  repeated float data = 1;
+}
+
