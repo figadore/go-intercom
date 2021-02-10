@@ -218,7 +218,7 @@ func (a *audioBuffer) Read(buf []float32) (n int, err error) {
 	select {
 	case <-a.ctx.Done():
 		// return n, io.EOF
-		close(a.audioCh)
+		// close(a.audioCh)
 		return n, pulse.EndOfData
 	default:
 		break
@@ -262,7 +262,7 @@ func (a *audioBuffer) Write(buf []float32) (n int, err error) {
 	select {
 	case <-a.ctx.Done():
 		// return n, io.EOF
-		close(a.audioCh)
+		// close(a.audioCh)
 		return n, pulse.EndOfData
 	default:
 		break
