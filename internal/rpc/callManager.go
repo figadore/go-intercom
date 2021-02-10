@@ -5,14 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
-	"sync"
 
 	"github.com/jfreymuth/pulse"
 	"google.golang.org/grpc"
 
-	//"github.com/figadore/go-intercom/internal/log"
+	"github.com/figadore/go-intercom/internal/log"
 	"github.com/figadore/go-intercom/internal/rpc/pb"
 	"github.com/figadore/go-intercom/internal/station"
 	"github.com/figadore/go-intercom/pkg/call"
@@ -29,7 +27,6 @@ type grpcCallManager struct {
 	station  *station.Station
 }
 
-// add common methods here
 func (p *grpcCallManager) EndCalls() {
 	for _, call := range p.callList {
 		call.Hangup()
@@ -44,6 +41,12 @@ func NewCallManager() *grpcCallManager {
 
 func (p *grpcCallManager) SetStation(s *station.Station) {
 	p.station = s
+}
+
+type audioBuffer struct {
+	audioCh  chan []float32
+	buffered []float32
+	ctx      context.Context
 }
 
 func (p *grpcCallManager) outgoingCall(parentContext context.Context, address string) {
@@ -69,6 +72,7 @@ func (p *grpcCallManager) outgoingCall(parentContext context.Context, address st
 	errCh := make(chan error)
 	audioInCh := make(chan []float32)
 	audioOutCh := make(chan []float32)
+	// Things seem to break when these are uncommented, still not sure why
 	// defer close(audioInCh)
 	// defer close(audioOutCh)
 
@@ -81,7 +85,7 @@ func (p *grpcCallManager) outgoingCall(parentContext context.Context, address st
 		log.Println(msg)
 		return
 	}
-	log.Println("Debug: dialed")
+	log.Debugln("Debug: dialed")
 	defer conn.Close()
 	client := pb.NewIntercomClient(conn)
 	serverStream, err := client.DuplexCall(ctx)
@@ -91,8 +95,6 @@ func (p *grpcCallManager) outgoingCall(parentContext context.Context, address st
 	}
 	defer func() { _ = serverStream.CloseSend() }() // doesn't return errors, always nil
 
-	log.SetFlags(log.Ldate | log.Lmicroseconds)
-	log.SetOutput(os.Stdout)
 	speakerBuf := audioBuffer{
 		audioCh: audioInCh,
 		ctx:     ctx,
@@ -119,6 +121,7 @@ func (p *grpcCallManager) outgoingCall(parentContext context.Context, address st
 	}
 }
 
+// Infinite loop to receive from the gRPC stream and send it to the speaker
 func startReceiving(ctx context.Context, speakerCh chan<- []float32, errCh chan error, recvFn func() (*pb.AudioData, error)) {
 	log.Println("startReceiving: enter")
 	defer log.Println("startReceiving: exit")
@@ -152,10 +155,12 @@ func startReceiving(ctx context.Context, speakerCh chan<- []float32, errCh chan 
 	}
 }
 
+// Infinite loop to receive from the mic and stream it to the gRPC server
 func startSending(ctx context.Context, micCh <-chan []float32, errCh chan error, sendFn func(*pb.AudioData) error) {
 	log.Println("startSending: enter")
 	defer log.Println("startSending: exit")
-	// to end streaming, send io.EOF and return
+	// when streaming ends, client receives io.EOF
+	// not sure how to initiate this on the server side though
 	var audioBytes []float32
 	var ok bool
 	var data pb.AudioData
@@ -165,8 +170,6 @@ func startSending(ctx context.Context, micCh <-chan []float32, errCh chan error,
 			log.Println("startSending: context done")
 			if err := ctx.Err(); err != nil {
 				// TODO find out how to close connection from here... send nil?
-				//log.Println("startSending: Warning, sending nil")
-				//_ = sendFn(nil)
 				log.Println("startSending: context error", err)
 				errCh <- err
 			}
@@ -174,27 +177,7 @@ func startSending(ctx context.Context, micCh <-chan []float32, errCh chan error,
 		default:
 			break
 		}
-		// TODO check for closed channel
 		audioBytes, ok = <-micCh
-		if !ok {
-			msg := "startSending: error mic receiving from channel (closed)"
-			log.Println(msg)
-			errCh <- errors.New(msg)
-			return
-
-		}
-		if audioBytes == nil {
-			msg := "startSending: error, received nil from channel"
-			log.Println(msg)
-			errCh <- errors.New(msg)
-			return
-		}
-		if len(audioBytes) == 0 {
-			msg := "startSending: error, 0 bytes in audioBytes"
-			log.Println(msg)
-			errCh <- errors.New(msg)
-			return
-		}
 		data = pb.AudioData{
 			Data: audioBytes,
 		}
@@ -207,31 +190,19 @@ func startSending(ctx context.Context, micCh <-chan []float32, errCh chan error,
 	}
 }
 
-type audioBuffer struct {
-	sync.Mutex
-	audioCh  chan []float32
-	buffered []float32
-	ctx      context.Context
-}
-
+// Read receives data from the audio data channel and sends it to the speaker
 func (a *audioBuffer) Read(buf []float32) (n int, err error) {
 	select {
 	case <-a.ctx.Done():
-		// return n, io.EOF
 		// close(a.audioCh)
 		return n, pulse.EndOfData
 	default:
 		break
 	}
-	// start := time.Now()
-	// a.Lock()
 	if len(a.buffered) == 0 {
 		// blocking
-		// a.Unlock()
 		a.fill()
-		// a.Lock()
 	}
-	// make a copy so we can unblock other processes
 	copy(buf, a.buffered)
 	if len(a.buffered) >= len(buf) {
 		n = len(buf)
@@ -239,45 +210,33 @@ func (a *audioBuffer) Read(buf []float32) (n int, err error) {
 		n = len(a.buffered)
 	}
 	a.buffered = a.buffered[n:]
-	//a.Unlock()
-	// pre-emptively fetch from the channel
-	//if len(a.buffered) < (fragmentSize / 2) {
-	//	go a.fill()
-	//}
-	// elapsed := time.Since(start)
-	// log.Printf("audioBuffer.Read took %s to read %v bytes from audioCh", elapsed, n)
 	return
 }
 
+// fill receives from the audio channel and places it in a buffer
 func (a *audioBuffer) fill() {
 	// TODO check for closed channel
 	data := <-a.audioCh
-	a.Lock()
-	defer a.Unlock()
 	a.buffered = append(a.buffered, data...)
 }
 
-// Write sends the data from a passed-in buffer to the buffered audio channel
+// Write sends the data from the microphone buffer and sends it to the audio data channel
 func (a *audioBuffer) Write(buf []float32) (n int, err error) {
 	select {
 	case <-a.ctx.Done():
-		// return n, io.EOF
 		// close(a.audioCh)
 		return n, pulse.EndOfData
 	default:
 		break
 	}
-	// for n, data := range buf {
-	// start := time.Now()
 	data := make([]float32, len(buf))
 	copy(data, buf)
 	a.audioCh <- data
-	// elapsed := time.Since(start)
 	n = len(buf)
-	// log.Printf("audioBuffer.Write took %s to send %v bytes to audioCh", elapsed, n)
 	return n, nil
 }
 
+// startPlayback receives data from a channel and plays through the speaker
 func startPlayback(ctx context.Context, speakerBuf *audioBuffer, errCh chan error) {
 	log.Println("startPlayback: enter")
 	defer log.Println("startPlayback: exit")
@@ -304,10 +263,10 @@ func startPlayback(ctx context.Context, speakerBuf *audioBuffer, errCh chan erro
 		log.Println("startPlayback: context error", err)
 		errCh <- err
 		// to allow Drain() to return, send pulse.EndOfData from reader
-		// this *should* happen when the context is cancelled for any reason (see speakerBuf.Read)
-		log.Println("Debug: Draining speaker stream")
+		// this should happen when the context is cancelled for any reason (see speakerBuf.Read)
+		log.Debugln("Debug: Draining speaker stream")
 		speakerStream.Drain()
-		log.Println("Debug: Drained speaker stream")
+		log.Debugln("Debug: Drained speaker stream")
 		return
 	}
 	log.Println("Underflow:", speakerStream.Underflow())
@@ -320,6 +279,7 @@ func startPlayback(ctx context.Context, speakerBuf *audioBuffer, errCh chan erro
 	}
 }
 
+// startRecording gets data from the microphone and sends it to the audio channel
 func startRecording(ctx context.Context, micBuf *audioBuffer, errCh chan error) {
 	log.Println("startRecording: enter")
 	defer log.Println("startRecording: exit")
@@ -352,12 +312,13 @@ func startRecording(ctx context.Context, micBuf *audioBuffer, errCh chan error) 
 	}
 }
 
+// CallAll calls every intercom station it knows about
 func (p *grpcCallManager) CallAll(ctx context.Context) {
-	log.Println("Debug: callManager.CallAll: enter")
-	defer log.Println("Debug: callManager.CallAll: exit")
+	log.Debugln("Debug: callManager.CallAll: enter")
+	defer log.Debugln("Debug: callManager.CallAll: exit")
 	intercoms := os.Args[1:]
 	for _, address := range intercoms {
-		// TODO do this with a go routine if there are more than one clients
+		// TODO do this with a go routine if there are more than one clients?
 		p.outgoingCall(ctx, address)
 	}
 }

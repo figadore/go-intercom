@@ -11,11 +11,6 @@ import (
 	"github.com/figadore/go-intercom/pkg/call"
 )
 
-//type Server struct {
-//	station *station.Station
-//	server  *server
-//}
-
 func NewServer() *grpc.Server {
 	s := grpc.NewServer()
 	pb.RegisterIntercomServer(s, &Server{})
@@ -36,7 +31,6 @@ func Serve(s *grpc.Server, errCh chan error) {
 	}
 }
 
-// "inherit" from unimplemented for future compatibility
 type Server struct {
 	pb.UnimplementedIntercomServer
 }
