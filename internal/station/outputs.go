@@ -9,6 +9,15 @@ import (
 	"github.com/warthog618/gpiod"
 )
 
+// Allow various ways to display status and other info
+// E.g. LEDs, TFT, text to speech
+type Outputs interface {
+	IncomingCall(ctx context.Context, from string) error
+	UpdateStatus(status int) error
+	OutgoingCall(ctx context.Context, to string) error
+	Close()
+}
+
 type ledDisplay struct {
 	greenLed, yellowLed *gpiod.Line
 }
@@ -62,10 +71,16 @@ func (d *ledDisplay) UpdateStatus(status int) error {
 		log.Println("incoming call status")
 	} else if status == statusOutgoingCall {
 		log.Println("outgoing call status")
-		d.greenLed.SetValue(1)
+		err := d.greenLed.SetValue(1)
+		if err != nil {
+			return err
+		}
 	} else if status == statusCallConnected {
 		log.Println("call connected status")
-		d.greenLed.SetValue(1)
+		err := d.greenLed.SetValue(1)
+		if err != nil {
+			return err
+		}
 	} else {
 		log.Println("Unknown status")
 	}

@@ -8,71 +8,42 @@ import (
 
 	"github.com/figadore/go-intercom/internal/log"
 	"github.com/figadore/go-intercom/internal/rpc/pb"
-	"github.com/figadore/go-intercom/pkg/call"
+	"github.com/figadore/go-intercom/internal/station"
 )
 
-func NewServer() *grpc.Server {
+func NewServer(intercom *station.Station) *grpc.Server {
 	s := grpc.NewServer()
-	pb.RegisterIntercomServer(s, &Server{})
+	pb.RegisterIntercomServer(s, &Server{
+		station: intercom,
+		ctx:     intercom.Context,
+	})
 	return s
 }
 
 func Serve(s *grpc.Server, errCh chan error) {
 	log.Debugf("Start net.Listen: %v", port)
-	defer log.Debugf("Finished net.Listen: %v", port)
+	defer log.Debugf("Serve: Finished net.Listen: %v", port)
 	lis, err := net.Listen("tcp", port)
 	if err != nil {
-		log.Printf("failed to listen: %v", err)
+		log.Printf("Serve: failed to listen: %v", err)
 		errCh <- err
 	}
 	if err := s.Serve(lis); err != nil {
-		log.Printf("failed to serve: %v", err)
+		log.Printf("Serve: failed to serve: %v", err)
 		errCh <- err
 	}
 }
 
 type Server struct {
 	pb.UnimplementedIntercomServer
+	station *station.Station
+	ctx     context.Context
 }
 
 func (s *Server) DuplexCall(clientStream pb.Intercom_DuplexCallServer) error {
-	log.Debugln("Start server side DuplexCall")
-	address := "unknown"
-	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), call.ContextKey("address"), address))
-	currentCall := call.Call{
-		To:     "self",
-		From:   address,
-		Cancel: cancel,
-		Status: call.CallStatusActive,
-	}
-	callManager := NewCallManager()
-	callManager.callList = append(callManager.callList, currentCall)
-	log.Debugln("DuplexCall: context created")
-	defer cancel()
-	errCh := make(chan error)
-	audioInCh := make(chan []float32)
-	audioOutCh := make(chan []float32)
-	log.Debugln("DuplexCall: channels created")
-	speakerBuf := audioBuffer{
-		audioCh: audioInCh,
-		ctx:     ctx,
-	}
-	micBuf := audioBuffer{
-		audioCh: audioOutCh,
-		ctx:     ctx,
-	}
-	log.Debugln("DuplexCall: buffers created")
-	go startReceiving(ctx, audioInCh, errCh, clientStream.Recv)
-	go startPlayback(ctx, &speakerBuf, errCh)
-	go startRecording(ctx, &micBuf, errCh)
-	go startSending(ctx, audioOutCh, errCh, clientStream.Send)
-	log.Debugln("DuplexCall: go routines started")
-	select {
-	case <-ctx.Done():
-		log.Printf("Server.DuplexCall: context.Done: %v", ctx.Err())
-		return ctx.Err()
-	case err := <-errCh:
-		log.Printf("Server.DuplexCall: errCh: %v", err)
-		return err
-	}
+	log.Println("Start server side DuplexCall")
+	callManager := s.station.CallManager.(*grpcCallManager)
+	err := callManager.duplexCall(s.ctx, clientStream)
+	log.Println("Server-side duplex call ended with:", err)
+	return err
 }

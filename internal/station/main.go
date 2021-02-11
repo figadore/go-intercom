@@ -3,66 +3,128 @@ package station
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/figadore/go-intercom/pkg/call"
 	"github.com/warthog618/gpiod"
 )
 
+type Status struct {
+	sync.Mutex
+	status int
+}
+
+func (s *Status) Set(flag int) int {
+	s.Lock()
+	defer s.Unlock()
+	s.status = s.status | flag
+	return s.status
+}
+
+func (s *Status) Has(flag int) bool {
+	s.Lock()
+	defer s.Unlock()
+	return s.status&flag != 0
+}
+
+func (s *Status) Clear(flag int) int {
+	s.Lock()
+	defer s.Unlock()
+	s.status = s.status &^ flag
+	return s.status
+}
+
+func (s *Status) Toggle(flag int) int {
+	s.Lock()
+	defer s.Unlock()
+	s.status = s.status ^ flag
+	return s.status
+}
+
 type Station struct {
-	Inputs     Inputs
-	Outputs    Outputs
-	Speaker    Speaker
-	Microphone Microphone
+	sync.Mutex
+	CallManager call.Manager
+	Context     context.Context
+	Inputs      Inputs
+	Outputs     Outputs
+	Speaker     *Speaker
+	Microphone  *Microphone
+	Status      Status
 }
 
 // Bitmask to handle multiple simultaneous states
 const (
-	statusDefault = 1 << iota
+	statusUnknown = 1 << iota
+	statusDefault
 	statusDoNotDisturb
 	statusIncomingCall
 	statusOutgoingCall
 	statusCallConnected
 )
 
-// Allow various ways to display status and other info
-// E.g. LEDs, TFT, text to speech
-type Outputs interface {
-	IncomingCall(ctx context.Context, from string) error
-	UpdateStatus(status int) error
-	OutgoingCall(ctx context.Context, to string) error
-	Close()
-}
-
-// Allow various ways to interact with the intercom
-// E.g. buttons, menu with display, voice commands
-type Inputs interface {
-	acceptCall(ctx context.Context, from string, callManager call.Manager)
-	placeCall(ctx context.Context, to []string, callManager call.Manager)
-	callAll(ctx context.Context, callManager call.Manager)
-	hangup(callManager call.Manager)
-	setVolume(percent int)
-	setDoNotDisturb(status int)
-	Close()
-}
-
-func New(ctx context.Context, dotEnv map[string]string, callManager call.Manager) *Station {
-	chip := reserveChip()
-	defer chip.Close()
+func New(ctx context.Context, dotEnv map[string]string, callManagerFactory func() call.Manager) *Station {
 	// get access to leds, display, etc
 	outputs := getOutputs(dotEnv)
-	// get access to buttons, volume, etc
-	inputs := getInputs(ctx, dotEnv, callManager)
-	return &Station{
-		Inputs:     inputs,
-		Outputs:    outputs,
-		Speaker:    Speaker{},
-		Microphone: Microphone{},
+	callManager := callManagerFactory()
+
+	speaker := Speaker{
+		AudioCh: make(chan []float32),
+		Context: ctx,
 	}
+	mic := Microphone{
+		AudioCh: make(chan []float32),
+		Context: ctx,
+	}
+	// Initialize the station (getInputs needs it for the callback)
+	station := Station{
+		Context:     ctx,
+		CallManager: callManager,
+		Outputs:     outputs,
+		Speaker:     &speaker,
+		Microphone:  &mic,
+		Status:      Status{status: statusUnknown},
+	}
+
+	// get access to buttons, volume, etc
+	inputs := getInputs(ctx, dotEnv, &station)
+	station.Inputs = inputs
+	return &station
 }
 
-func (d Station) Close() {
-	d.Inputs.Close()
-	d.Outputs.Close()
+func (s *Station) StartPlayback(ctx context.Context, errCh chan error) {
+	s.Speaker.StartPlayback(ctx, errCh)
+}
+
+func (s *Station) StartRecording(ctx context.Context, errCh chan error) {
+	s.Microphone.StartRecording(ctx, errCh)
+}
+
+func (s *Station) SendSpeakerAudio(data []float32) {
+	s.Speaker.AudioCh <- data
+}
+
+func (s *Station) ReceiveMicAudio() []float32 {
+	return <-s.Microphone.AudioCh
+}
+
+func (s *Station) Close() {
+	s.Inputs.Close()
+	s.Outputs.Close()
+	s.Speaker.Close()
+	s.Microphone.Close()
+}
+
+func (s *Station) hasCalls() bool {
+	// m := *s.CallManager
+	return s.CallManager.HasCalls()
+}
+
+func (s *Station) callAll(ctx context.Context) {
+	s.CallManager.CallAll(ctx)
+}
+
+func (s *Station) hangup() {
+	s.CallManager.Hangup()
 }
 
 func reserveChip() *gpiod.Chip {
@@ -83,11 +145,9 @@ func getOutputs(dotEnv map[string]string) Outputs {
 	}
 }
 
-func getInputs(ctx context.Context, dotEnv map[string]string, callManager call.Manager) Inputs {
+func getInputs(ctx context.Context, dotEnv map[string]string, station *Station) Inputs {
 	if val, ok := dotEnv["INPUT_TYPE"]; ok && val == "button" {
-		chip := reserveChip()
-		defer chip.Close()
-		inputs := newPhysicalInputs(ctx, chip, dotEnv, callManager)
+		inputs := newPhysicalInputs(ctx, dotEnv, station)
 		return inputs
 	} else {
 		panic(fmt.Sprintf("Unknown display type: %v", val))

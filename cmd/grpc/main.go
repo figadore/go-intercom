@@ -33,16 +33,13 @@ func main() {
 		panic(err)
 	}
 
-	grpcServer := rpc.NewServer()
 	// Create a grpc call manager to create new clients for outgoing calls
-	callManager := rpc.NewCallManager()
-	intercom := station.New(ctx, dotEnv, callManager)
-	// Inject call manager so we can track and hang up calls initiated from other stations
-	callManager.SetStation(intercom)
+	intercom := station.New(ctx, dotEnv, rpc.NewCallManager)
 	defer log.Debugln("main: Closed intercom")
 	defer intercom.Close()
 	defer log.Debugln("main: Closing intercom")
 
+	grpcServer := rpc.NewServer(intercom)
 	// Start the main process
 	go rpc.Serve(grpcServer, errCh)
 
