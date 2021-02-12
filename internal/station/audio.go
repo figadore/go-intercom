@@ -20,12 +20,12 @@ type Speaker struct {
 }
 
 func (s *Speaker) Close() {
-	// TODO find out if this is necessary
 	close(s.AudioCh)
 }
 
 // startPlayback receives data from a channel and plays through the speaker
-func (speaker *Speaker) StartPlayback(ctx context.Context, errCh chan error) {
+// func (speaker *Speaker) StartPlayback(ctx context.Context, errCh chan error) {
+func (speaker *Speaker) StartPlayback(errCh chan error) {
 	log.Println("startPlayback: enter")
 	defer log.Println("startPlayback: exit")
 	c, err := pulse.NewClient()
@@ -43,20 +43,15 @@ func (speaker *Speaker) StartPlayback(ctx context.Context, errCh chan error) {
 	}
 	defer speakerStream.Close()
 	speakerStream.Start()
-	// Stream to speaker until context is cancelled
-	<-ctx.Done()
-	log.Println("startPlayback: context done")
-	errCh <- ctx.Err()
-	if err != nil {
-		log.Println("startPlayback: context error", err)
-		errCh <- err
-		// to allow Drain() to return, send pulse.EndOfData from reader
-		// this should happen when the context is cancelled for any reason (see Speaker.Read)
-		log.Debugln("Debug: Draining speaker stream")
-		speakerStream.Drain()
-		log.Debugln("Debug: Drained speaker stream")
-		return
-	}
+	//// Stream to speaker until context is cancelled
+	//<-ctx.Done()
+	//log.Println("startPlayback: context done:", ctx.Err())
+	// to allow Drain() to return, send pulse.EndOfData from reader
+	// this should happen when the main context is cancelled for any reason
+	// so the speaker stream will remain streaming until program close/crash
+	log.Debugln("startPlayback: Draining speaker stream2")
+	speakerStream.Drain()
+	log.Debugln("startPlayback: Drained speaker stream2")
 	log.Println("Underflow:", speakerStream.Underflow())
 	if speakerStream.Error() != nil {
 		err = speakerStream.Error()
@@ -68,12 +63,19 @@ func (speaker *Speaker) StartPlayback(ctx context.Context, errCh chan error) {
 }
 
 // Read receives data from the audio data channel and sends it to the speaker
-// TODO document why an intermediate buffer is needed (s.buffered) and why it doesn't apply to mic.Write
+//
+// The length of buf is unknown, so we use the speaker's "buffered" field
+// to hold whatever that doesn't fit in the current slice
+//
+// If what is already buffered isn't enough to fill buf, just copy that many
+// bytes and return. The next Read will receive from the audio channel
 func (s *Speaker) Read(buf []float32) (n int, err error) {
 	select {
 	case <-s.Context.Done():
 		// close(s.audioCh)
-		return n, pulse.EndOfData
+		err = pulse.EndOfData
+		log.Println("Speaker.Read: station.Context.Done(), sending EndOfData error", err)
+		return
 	default:
 		break
 	}
@@ -84,12 +86,15 @@ func (s *Speaker) Read(buf []float32) (n int, err error) {
 		data := <-s.AudioCh
 		s.buffered = append(s.buffered, data...)
 	}
+	// Copies as much as possible, based on smaller of the two slices
 	copy(buf, s.buffered)
 	if len(s.buffered) >= len(buf) {
 		n = len(buf)
 	} else {
 		n = len(s.buffered)
 	}
+	// Truncate data that has already been sent to the channel
+	// Save the rest for the next call to Read
 	s.buffered = s.buffered[n:]
 	return
 }
@@ -100,7 +105,6 @@ type Microphone struct {
 }
 
 func (m *Microphone) Close() {
-	// TODO find out if this is necessary
 	close(m.AudioCh)
 }
 
@@ -140,15 +144,15 @@ func (mic *Microphone) StartRecording(ctx context.Context, errCh chan error) {
 	}
 	defer micStream.Close()
 	micStream.Start() // async
+	// Record until call ends
 	<-ctx.Done()
-	log.Println("startRecording: context done")
-	err = ctx.Err()
-	if err != nil {
-		log.Println("startRecording: context error", err)
-		micStream.Stop()
-		log.Println("startRecording: sending error", err)
-		errCh <- err
-		log.Println("startRecording: sent error", err)
-		return
-	}
+	log.Println("startRecording: context done with error:", ctx.Err())
+	micStream.Stop()
+	log.Println("startRecording: stopped")
+	//if err != nil {
+	//	//log.Println("startRecording: sending error", err)
+	//	//errCh <- err
+	//	//log.Println("startRecording: sent error", err)
+	//	return
+	//}
 }

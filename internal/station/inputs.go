@@ -72,18 +72,23 @@ func (i *physicalInputs) blackButtonHandler(gpiod.LineEvent) {
 	log.Debugln("group call handler: callAll")
 	defer log.Debugln("group call handler: completed callAll")
 	if i.station.Status.Has(StatusDoNotDisturb) && i.station.Status.Has(StatusIncomingCall) {
+		log.Debugln("accepting call")
 		i.acceptCall()
 	} else {
+		log.Debugln("blackButtonHandler: calling all")
 		i.callAll()
+		log.Debugln("blackButtonHandler: called all")
 	}
 }
 
 func (i *physicalInputs) redButtonHandler(gpiod.LineEvent) {
 	log.Debugln("end call handler: hangup")
-	defer log.Debugln("end call handler: completed hangup")
+	defer log.Debugln("end call handler: completed handler")
 	if i.station.hasCalls() {
+		log.Debugln("hanging up")
 		i.hangup()
 	} else {
+		log.Debugln("toggling do not disturb")
 		i.toggleDoNotDisturb()
 	}
 }

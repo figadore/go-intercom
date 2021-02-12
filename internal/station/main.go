@@ -3,6 +3,7 @@ package station
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/figadore/go-intercom/pkg/call"
 	"github.com/warthog618/gpiod"
@@ -88,8 +89,8 @@ func getInputs(ctx context.Context, dotEnv map[string]string, station *Station) 
 }
 
 // StartPlayback begins the station's speaker playback
-func (s *Station) StartPlayback(ctx context.Context, errCh chan error) {
-	s.Speaker.StartPlayback(ctx, errCh)
+func (s *Station) StartPlayback(errCh chan error) {
+	s.Speaker.StartPlayback(errCh)
 }
 
 // StartRecording begins the station's mic recording/listening
@@ -109,10 +110,12 @@ func (s *Station) ReceiveMicAudio() []float32 {
 
 // Release resources for this device. Only do this on full shut down
 func (s *Station) Close() {
+	log.Println("Station.Close()")
 	s.Inputs.Close()
 	s.Outputs.Close()
 	s.Speaker.Close()
 	s.Microphone.Close()
+	log.Println("Station.Closed()")
 }
 
 func (s *Station) hasCalls() bool {
