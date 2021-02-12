@@ -31,3 +31,6 @@ The cmd/grpc package creates the top-level [Station] object with a context that 
 
 ### Station
 The intercom station object is the primary point of contact for various components.
+
+### Calls
+[Call]s are managed by the [CallManager]. Whether a call is incoming or outoing, the same duplexCall function is used (though this might change when multi-way calling is added). Each call object has it's own context and cancel method, so that it can be cancelled from the inputs through the call manager

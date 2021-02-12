@@ -1,10 +1,12 @@
 package rpc
 
 import (
-	"context"
+	//"context"
 	"net"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 
 	"github.com/figadore/go-intercom/internal/log"
 	"github.com/figadore/go-intercom/internal/rpc/pb"
@@ -15,7 +17,7 @@ func NewServer(intercom *station.Station) *grpc.Server {
 	s := grpc.NewServer()
 	pb.RegisterIntercomServer(s, &Server{
 		station: intercom,
-		ctx:     intercom.Context,
+		// ctx:     intercom.Context,
 	})
 	return s
 }
@@ -37,13 +39,19 @@ func Serve(s *grpc.Server, errCh chan error) {
 type Server struct {
 	pb.UnimplementedIntercomServer
 	station *station.Station
-	ctx     context.Context
 }
 
 func (s *Server) DuplexCall(clientStream pb.Intercom_DuplexCallServer) error {
-	log.Println("Start server side DuplexCall")
+	streamCtx := clientStream.Context()
+	p, _ := peer.FromContext(streamCtx)
+	addrPort := p.Addr.String()
+	md, _ := metadata.FromIncomingContext(streamCtx)
+	to := md[":authority"][0]
+	from := addrPort
+
+	log.Println("Start server side DuplexCall, receiving from ", addrPort)
 	callManager := s.station.CallManager.(*grpcCallManager)
-	err := callManager.duplexCall(s.ctx, clientStream)
+	err := callManager.duplexCall(s.station.Context, to, from, clientStream)
 	log.Println("Server-side duplex call ended with:", err)
 	return err
 }

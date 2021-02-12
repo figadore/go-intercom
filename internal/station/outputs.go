@@ -1,9 +1,9 @@
 package station
 
 import (
-	"context"
 	"log"
 	"strconv"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/warthog618/gpiod"
@@ -11,15 +11,82 @@ import (
 
 // Allow various ways to display status and other info
 // E.g. LEDs, TFT, text to speech
+// If UpdateStatus has an error, there is likely nothing to do about it except log it, so no error object is returned
 type Outputs interface {
-	IncomingCall(ctx context.Context, from string) error
-	UpdateStatus(status int) error
-	OutgoingCall(ctx context.Context, to string) error
+	UpdateStatus(status *Status)
 	Close()
 }
 
+type led struct {
+	line     *gpiod.Line
+	ticker   *time.Ticker
+	done     chan bool
+	blinking bool
+}
+
+func newLed(line *gpiod.Line) *led {
+	ticker := time.NewTicker(time.Second)
+	ticker.Stop()
+	return &led{
+		line:     line,
+		ticker:   ticker,
+		done:     make(chan bool),
+		blinking: false,
+	}
+}
+
+func (l *led) blink(interval time.Duration) {
+	l.ticker.Reset(interval)
+	go func() {
+		v := 0
+		l.blinking = true
+		for {
+			select {
+			case <-l.done:
+				l.blinking = false
+				return
+			case <-l.ticker.C:
+				v = v - 1
+				err := l.line.SetValue(v)
+				if err != nil {
+					log.Println("Error turning on LED:", err)
+				}
+			}
+		}
+	}()
+}
+
+func (l *led) on() {
+	if l.blinking {
+		l.ticker.Stop()
+		l.done <- true
+		l.blinking = false
+	}
+	err := l.line.SetValue(1)
+	if err != nil {
+		log.Println("Error turning on LED:", err)
+	}
+}
+
+func (l *led) off() {
+	if l.blinking {
+		l.ticker.Stop()
+		l.done <- true
+		l.blinking = false
+	}
+	err := l.line.SetValue(0)
+	if err != nil {
+		log.Println("Error turning off LED:", err)
+	}
+}
+
+func (l *led) Close() {
+	l.off()
+	l.line.Close()
+}
+
 type ledDisplay struct {
-	greenLed, yellowLed *gpiod.Line
+	greenLed, yellowLed *led
 }
 
 func newLedDisplay(chip *gpiod.Chip) *ledDisplay {
@@ -44,52 +111,38 @@ func newLedDisplay(chip *gpiod.Chip) *ledDisplay {
 		panic(err)
 	}
 	return &ledDisplay{
-		greenLed:  greenLed,
-		yellowLed: yellowLed,
+		greenLed:  newLed(greenLed),
+		yellowLed: newLed(yellowLed),
 	}
 }
 
-func (d *ledDisplay) IncomingCall(ctx context.Context, from string) error {
-	err := d.UpdateStatus(statusIncomingCall)
-	return err
-}
-
-func (d *ledDisplay) UpdateStatus(status int) error {
-	if status == statusDefault {
-		log.Println("default status")
-		err := d.yellowLed.SetValue(0)
-		if err != nil {
-			return err
-		}
-		err = d.greenLed.SetValue(0)
-		if err != nil {
-			return err
-		}
-	} else if status == statusDoNotDisturb {
+func (d *ledDisplay) UpdateStatus(status *Status) {
+	d.yellowLed.off()
+	d.greenLed.off()
+	if status.Has(StatusDoNotDisturb) {
+		// yellow solid
+		d.yellowLed.on()
 		log.Println("do not disturb status")
-	} else if status == statusIncomingCall {
-		log.Println("incoming call status")
-	} else if status == statusOutgoingCall {
-		log.Println("outgoing call status")
-		err := d.greenLed.SetValue(1)
-		if err != nil {
-			return err
-		}
-	} else if status == statusCallConnected {
-		log.Println("call connected status")
-		err := d.greenLed.SetValue(1)
-		if err != nil {
-			return err
-		}
-	} else {
-		log.Println("Unknown status")
 	}
-	return nil
-}
-
-func (d *ledDisplay) OutgoingCall(ctx context.Context, to string) error {
-	err := d.UpdateStatus(statusOutgoingCall)
-	return err
+	if status.Has(StatusIncomingCall) {
+		d.greenLed.blink(time.Millisecond * 500)
+		log.Println("incoming call status")
+	}
+	if status.Has(StatusOutgoingCall) {
+		// yellow blink
+		log.Println("outgoing call status")
+		d.yellowLed.blink(time.Millisecond * 500)
+	}
+	if status.Has(StatusCallConnected) {
+		// green solid
+		log.Println("call connected status")
+		d.greenLed.on()
+	}
+	if status.Has(StatusError) {
+		// green/yellow on
+		d.yellowLed.on()
+		d.greenLed.on()
+	}
 }
 
 func (d *ledDisplay) Close() {

@@ -8,9 +8,9 @@ import (
 
 const (
 	// Bitmask to handle multiple simultaneous states
-	CallStatusPending = 1 << iota
-	CallStatusActive
-	CallStatusTerminating
+	StatusPending = 1 << iota
+	StatusActive
+	StatusTerminating
 )
 
 type ContextKey string
@@ -29,9 +29,8 @@ type Call struct {
 //}
 
 func (c *Call) Hangup() {
-	c.Status = CallStatusTerminating
+	c.Status = StatusTerminating
 	c.Cancel()
-	// TODO remove from call list when terminated
 }
 
 type Manager interface {
@@ -43,12 +42,12 @@ type Manager interface {
 }
 
 type GenericManager struct {
-	callList []Call
+	CallList map[xid.ID]Call
 }
 
 func (m *GenericManager) HasCalls() bool {
-	for _, call := range m.callList {
-		if call.Status|CallStatusPending|CallStatusActive != 0 {
+	for _, call := range m.CallList {
+		if (call.Status&StatusPending)|(call.Status&StatusActive) != 0 {
 			return true
 		}
 	}

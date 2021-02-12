@@ -22,7 +22,7 @@ func main() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
 	// Start a parent context that can stop child processes on global error (errCh)
-	ctx, cancel := context.WithCancel(context.Background())
+	mainContext, cancel := context.WithCancel(context.Background())
 
 	// Create a global fatal error channel
 	errCh := make(chan error)
@@ -34,7 +34,7 @@ func main() {
 	}
 
 	// Create a grpc call manager to create new clients for outgoing calls
-	intercom := station.New(ctx, dotEnv, rpc.NewCallManager)
+	intercom := station.New(mainContext, dotEnv, rpc.NewCallManager)
 	defer log.Debugln("main: Closed intercom")
 	defer intercom.Close()
 	defer log.Debugln("main: Closing intercom")
@@ -50,7 +50,7 @@ func main() {
 	defer cancel()
 	defer log.Debugln("Cancelling main context")
 	//if len(os.Args) > 1 {
-	//	callManager.CallAll(ctx)
+	//	intercom.CallManager.CallAll(mainContext)
 	//}
 	// Run forever, but clean up on error or OS signals
 	for {

@@ -17,24 +17,39 @@ import (
 
 type grpcCallManager struct {
 	call.GenericManager
-	callList []call.Call
-	station  *station.Station
+	station *station.Station
 }
 
 func (callManager *grpcCallManager) Hangup() {
-	for _, call := range callManager.callList {
-		call.Hangup()
+	for _, c := range callManager.CallList {
+		c.Hangup()
+		callManager.removeCall(c)
 	}
+	callManager.station.UpdateStatus()
 }
 
-func NewCallManager() call.Manager {
-	return &grpcCallManager{
-		callList: make([]call.Call, 0),
+func NewCallManager(intercom *station.Station) call.Manager {
+	m := &grpcCallManager{
+		station: intercom,
 	}
+	m.CallList = make(map[xid.ID]call.Call)
+	return m
 }
 
 func (callManager *grpcCallManager) SetStation(s *station.Station) {
 	callManager.station = s
+}
+
+func (callManager *grpcCallManager) addCall(c call.Call) {
+	_ = callManager.station.Status.Set(station.StatusCallConnected)
+	callManager.CallList[c.Id] = c
+}
+
+func (callManager *grpcCallManager) removeCall(c call.Call) {
+	delete(callManager.CallList, c.Id)
+	if len(callManager.CallList) == 0 {
+		_ = callManager.station.Status.Clear(station.StatusCallConnected)
+	}
 }
 
 type streamer interface {
@@ -42,13 +57,22 @@ type streamer interface {
 	Recv() (*pb.AudioData, error)
 }
 
-func (callManager *grpcCallManager) duplexCall(parentContext context.Context, stream streamer) error {
+func (callManager *grpcCallManager) duplexCall(parentContext context.Context, from string, to string, stream streamer) error {
 	callId := xid.New()
 	ctx, cancel := context.WithCancel(context.WithValue(parentContext, call.ContextKey("id"), callId))
+	c := call.Call{
+		Id:     callId,
+		To:     to,
+		From:   from,
+		Cancel: cancel,
+		Status: call.StatusActive,
+	}
 	defer cancel()
 	log.Println("Starting call with id:", ctx.Value(call.ContextKey("id")))
 	errCh := make(chan error)
 	intercom := callManager.station
+	callManager.addCall(c)
+	defer callManager.removeCall(c)
 	go callManager.startReceiving(ctx, errCh, stream.Recv)
 	go intercom.StartPlayback(ctx, errCh)
 	go intercom.StartRecording(ctx, errCh)
@@ -65,21 +89,21 @@ func (callManager *grpcCallManager) duplexCall(parentContext context.Context, st
 }
 
 // CallAll calls every intercom station it knows about
-func (callManager *grpcCallManager) CallAll(ctx context.Context) {
+// ctx is station context/main context from cmd
+func (callManager *grpcCallManager) CallAll(mainContext context.Context) {
 	log.Debugln("Debug: callManager.CallAll: enter")
 	defer log.Debugln("Debug: callManager.CallAll: exit")
 	intercoms := os.Args[1:]
 	for _, address := range intercoms {
-		// TODO do this with a go routine if there are more than one clients?
-		callManager.outgoingCall(ctx, address)
+		go callManager.outgoingCall(mainContext, address)
 	}
 }
 
-func (callManager *grpcCallManager) outgoingCall(parentContext context.Context, address string) {
+func (callManager *grpcCallManager) outgoingCall(mainContext context.Context, address string) {
 	log.Println("outgoingCall: Start client side DuplexCall")
 	select {
-	case <-parentContext.Done():
-		msg := fmt.Sprintf("outgoingCall: Error: parent context cancelled: %v", parentContext.Err())
+	case <-mainContext.Done():
+		msg := fmt.Sprintf("outgoingCall: Error: parent context cancelled: %v", mainContext.Err())
 		log.Println(msg)
 		return
 	default:
@@ -88,6 +112,8 @@ func (callManager *grpcCallManager) outgoingCall(parentContext context.Context, 
 
 	// Initiate a grpc connection with the server
 	fullAddress := fmt.Sprintf("192.168.0.%s%s", address, port)
+	to := fullAddress
+	from := "self"
 	log.Println("dialing", fullAddress)
 	conn, err := grpc.Dial(fullAddress, grpc.WithInsecure(), grpc.WithBlock())
 	if err != nil {
@@ -104,7 +130,7 @@ func (callManager *grpcCallManager) outgoingCall(parentContext context.Context, 
 		return
 	}
 	defer func() { _ = serverStream.CloseSend() }() // doesn't return errors, always nil
-	err = callManager.duplexCall(parentContext, serverStream)
+	err = callManager.duplexCall(mainContext, to, from, serverStream)
 	log.Println("Client-side duplex call ended with:", err)
 }
 

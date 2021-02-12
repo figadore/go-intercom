@@ -25,7 +25,6 @@ type Inputs interface {
 // E.g. buttons, stateful menu with display, voice commands
 type physicalInputs struct {
 	station                        *Station
-	ctx                            context.Context
 	groupCallButton, endCallButton *gpiod.Line
 	// volumeControl                  *struct{}
 }
@@ -35,7 +34,7 @@ type physicalInputs struct {
 // also, what creates it? it should be wrappers around handlers in calls/, like callAll, and endCall, (and set dnd?)
 type Handlers map[string]func(gpiod.LineEvent)
 
-func newPhysicalInputs(ctx context.Context, dotEnv map[string]string, station *Station) *physicalInputs {
+func newPhysicalInputs(mainContext context.Context, dotEnv map[string]string, station *Station) *physicalInputs {
 	chip := reserveChip()
 	defer chip.Close()
 	// TODO intercom.Close hangs on the client side when context cancelled, find a way to allow it to close
@@ -46,7 +45,6 @@ func newPhysicalInputs(ctx context.Context, dotEnv map[string]string, station *S
 	// Set up button lines
 	inputs := &physicalInputs{
 		station: station,
-		ctx:     ctx,
 	}
 	groupCallButton, err := chip.RequestLine(blackButtonPin,
 		gpiod.WithDebounce(time.Millisecond*30),
@@ -73,7 +71,7 @@ func newPhysicalInputs(ctx context.Context, dotEnv map[string]string, station *S
 func (i *physicalInputs) blackButtonHandler(gpiod.LineEvent) {
 	log.Debugln("group call handler: callAll")
 	defer log.Debugln("group call handler: completed callAll")
-	if i.station.Status.Has(statusDoNotDisturb) && i.station.Status.Has(statusIncomingCall) {
+	if i.station.Status.Has(StatusDoNotDisturb) && i.station.Status.Has(StatusIncomingCall) {
 		i.acceptCall()
 	} else {
 		i.callAll()
@@ -107,7 +105,7 @@ func (i *physicalInputs) placeCall(to []string) {
 func (i *physicalInputs) callAll() {
 	log.Debugln("physicalInputs.callAll: enter")
 	defer log.Debugln("physicalInputs.callAll: exit")
-	i.station.callAll(i.ctx)
+	i.station.callAll(i.station.Context)
 }
 
 func (i *physicalInputs) hangup() {
@@ -121,5 +119,5 @@ func (i *physicalInputs) setDoNotDisturb(v bool) {
 }
 
 func (i *physicalInputs) toggleDoNotDisturb() {
-	i.station.Status.Toggle(statusDoNotDisturb)
+	i.station.Status.Toggle(StatusDoNotDisturb)
 }
