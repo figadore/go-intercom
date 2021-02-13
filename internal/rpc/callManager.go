@@ -17,7 +17,8 @@ import (
 
 type grpcCallManager struct {
 	call.GenericManager
-	station *station.Station
+	station  *station.Station
+	acceptCh chan bool
 }
 
 func (callManager *grpcCallManager) Hangup() {
@@ -30,10 +31,15 @@ func (callManager *grpcCallManager) Hangup() {
 
 func NewCallManager(intercom *station.Station) call.Manager {
 	m := &grpcCallManager{
-		station: intercom,
+		station:  intercom,
+		acceptCh: make(chan bool),
 	}
 	m.CallList = make(map[xid.ID]call.Call)
 	return m
+}
+
+func (callManager *grpcCallManager) AcceptCh() chan bool {
+	return callManager.acceptCh
 }
 
 func (callManager *grpcCallManager) SetStation(s *station.Station) {
@@ -43,6 +49,12 @@ func (callManager *grpcCallManager) SetStation(s *station.Station) {
 func (callManager *grpcCallManager) addCall(c call.Call) {
 	_ = callManager.station.Status.Set(station.StatusCallConnected)
 	callManager.CallList[c.Id] = c
+}
+
+func (callManager *grpcCallManager) AcceptCall() {
+}
+
+func (callManager *grpcCallManager) RejectCall() {
 }
 
 func (callManager *grpcCallManager) removeCall(c call.Call) {

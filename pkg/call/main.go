@@ -36,6 +36,9 @@ func (c *Call) Hangup() {
 type Manager interface {
 	CallAll(context.Context)
 	Hangup()
+	AcceptCall()
+	RejectCall()
+	AcceptCh() chan bool
 	HasCalls() bool
 	// PlaceCall(ctx context.Context, to []string)
 	// ServeCall(ctx context.Context, from string)

@@ -20,6 +20,7 @@ type Station struct {
 }
 
 func (station *Station) UpdateStatus() {
+	log.Println("Updating station status")
 	if !station.hasCalls() {
 		station.Status.Clear(StatusCallConnected)
 		station.Status.Clear(StatusIncomingCall)
@@ -58,6 +59,14 @@ func New(ctx context.Context, dotEnv map[string]string, callManagerFactory func(
 	inputs := getInputs(ctx, dotEnv, &station)
 	station.Inputs = inputs
 	return &station
+}
+
+func (s *Station) AcceptCall() {
+	s.CallManager.AcceptCh() <- true
+}
+
+func (s *Station) RejectCall() {
+	s.CallManager.AcceptCh() <- false
 }
 
 func (s *Station) callAll(mainContext context.Context) {

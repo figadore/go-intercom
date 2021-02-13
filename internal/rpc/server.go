@@ -3,6 +3,7 @@ package rpc
 import (
 	//"context"
 	"net"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -41,7 +42,36 @@ type Server struct {
 	station *station.Station
 }
 
+// DuplexCall is run whenever the server receives an incoming call
+// Return nil to end stream. client receives io.EOF
 func (s *Server) DuplexCall(clientStream pb.Intercom_DuplexCallServer) error {
+	s.station.Status.Set(station.StatusIncomingCall)
+	// TODO add call acceptance logic here
+	// If calls already active, accept call
+	if s.station.Status.Has(station.StatusCallConnected) {
+		log.Println("One or more calls already active, auto-answering")
+	} else if s.station.Status.Has(station.StatusDoNotDisturb) {
+		// Wait for call call manager accept/reject-call function
+		acceptCh := s.station.CallManager.AcceptCh()
+		log.Println("Waiting 20 seconds for call to be accepted")
+		select {
+		case accept := <-acceptCh:
+			if accept {
+				log.Println("Call accepted")
+			} else {
+				log.Println("Call rejected")
+				s.station.Status.Clear(station.StatusIncomingCall)
+				return nil
+			}
+		case <-time.After(20 * time.Second):
+			log.Println("Call rejected")
+			return nil
+		}
+	}
+	log.Println("Server accepting call")
+	// update status appropriately
+	s.station.Status.Clear(station.StatusIncomingCall)
+	// also add a timeout in case accept not received, reject
 	streamCtx := clientStream.Context()
 	p, _ := peer.FromContext(streamCtx)
 	addrPort := p.Addr.String()

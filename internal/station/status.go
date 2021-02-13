@@ -2,6 +2,8 @@ package station
 
 import (
 	"sync"
+
+	"github.com/figadore/go-intercom/internal/log"
 )
 
 type Status struct {
@@ -17,6 +19,7 @@ func (s *Status) Has(flag int) bool {
 }
 
 func (s *Status) Set(flag int) int {
+	log.Debugln("Setting status: ", flag)
 	s.Lock()
 	s.status = s.status | flag
 	s.Unlock()
@@ -25,6 +28,7 @@ func (s *Status) Set(flag int) int {
 }
 
 func (s *Status) Clear(flag int) int {
+	log.Debugln("Clearing status: ", flag)
 	s.Lock()
 	s.status = s.status &^ flag
 	s.Unlock()
@@ -33,6 +37,7 @@ func (s *Status) Clear(flag int) int {
 }
 
 func (s *Status) Toggle(flag int) int {
+	log.Debugln("Toggling status: ", flag)
 	s.Lock()
 	s.status = s.status ^ flag
 	s.Unlock()
@@ -42,10 +47,10 @@ func (s *Status) Toggle(flag int) int {
 
 // Bitmask to handle multiple simultaneous states
 const (
-	StatusDefault = 0
-	StatusError   = 1 << iota
-	StatusDoNotDisturb
-	StatusIncomingCall
-	StatusOutgoingCall
-	StatusCallConnected
+	StatusDefault       = 0
+	StatusError         = 1
+	StatusDoNotDisturb  = 1 << iota // 2
+	StatusIncomingCall              // 4
+	StatusOutgoingCall              // 8
+	StatusCallConnected             // 16
 )

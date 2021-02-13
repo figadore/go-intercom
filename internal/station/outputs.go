@@ -40,13 +40,15 @@ func (l *led) blink(interval time.Duration) {
 	go func() {
 		v := 0
 		l.blinking = true
+		log.Println("LED blink: waiting for done or ticker")
 		for {
 			select {
 			case <-l.done:
 				l.blinking = false
 				return
 			case <-l.ticker.C:
-				v = v - 1
+				v = 1 - v
+				log.Println("LED ticker.tick, setting value:", v)
 				err := l.line.SetValue(v)
 				if err != nil {
 					log.Println("Error turning on LED:", err)
@@ -117,9 +119,10 @@ func newLedDisplay(chip *gpiod.Chip) *ledDisplay {
 }
 
 func (d *ledDisplay) UpdateStatus(status *Status) {
+	log.Println("Updating LED status")
 	d.yellowLed.off()
 	d.greenLed.off()
-	if status.Has(StatusDoNotDisturb) {
+	if status.Has(StatusDoNotDisturb) && !status.Has(StatusCallConnected) {
 		// yellow solid
 		d.yellowLed.on()
 		log.Println("do not disturb status")

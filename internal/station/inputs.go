@@ -84,7 +84,10 @@ func (i *physicalInputs) blackButtonHandler(gpiod.LineEvent) {
 func (i *physicalInputs) redButtonHandler(gpiod.LineEvent) {
 	log.Debugln("end call handler: hangup")
 	defer log.Debugln("end call handler: completed handler")
-	if i.station.hasCalls() {
+	if i.station.Status.Has(StatusDoNotDisturb) && i.station.Status.Has(StatusIncomingCall) {
+		log.Debugln("rejecting call")
+		i.rejectCall()
+	} else if i.station.hasCalls() {
 		log.Debugln("hanging up")
 		i.hangup()
 	} else {
@@ -102,6 +105,11 @@ func (i *physicalInputs) Close() {
 }
 
 func (i *physicalInputs) acceptCall() {
+	i.station.AcceptCall()
+}
+
+func (i *physicalInputs) rejectCall() {
+	i.station.RejectCall()
 }
 
 func (i *physicalInputs) placeCall(to []string) {
