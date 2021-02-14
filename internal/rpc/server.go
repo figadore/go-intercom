@@ -46,7 +46,6 @@ type Server struct {
 // Return nil to end stream. client receives io.EOF
 func (s *Server) DuplexCall(clientStream pb.Intercom_DuplexCallServer) error {
 	s.station.Status.Set(station.StatusIncomingCall)
-	// TODO add call acceptance logic here
 	// If calls already active, accept call
 	if s.station.Status.Has(station.StatusCallConnected) {
 		log.Println("One or more calls already active, auto-answering")
@@ -65,6 +64,7 @@ func (s *Server) DuplexCall(clientStream pb.Intercom_DuplexCallServer) error {
 			}
 		case <-time.After(20 * time.Second):
 			log.Println("Call rejected")
+			s.station.Status.Clear(station.StatusIncomingCall)
 			return nil
 		}
 	}

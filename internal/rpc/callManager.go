@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/rs/xid"
 	"google.golang.org/grpc"
@@ -47,7 +48,9 @@ func (callManager *grpcCallManager) SetStation(s *station.Station) {
 }
 
 func (callManager *grpcCallManager) addCall(c call.Call) {
-	_ = callManager.station.Status.Set(station.StatusCallConnected)
+	callManager.station.Status.Set(station.StatusCallConnected)
+	callManager.station.Status.Clear(station.StatusOutgoingCall)
+	callManager.station.Status.Clear(station.StatusIncomingCall)
 	callManager.CallList[c.Id] = c
 }
 
@@ -146,6 +149,8 @@ func (callManager *grpcCallManager) outgoingCall(mainContext context.Context, ad
 	to := fullAddress
 	from := "self"
 	log.Println("outgoingCall: dialing", fullAddress)
+	_ = callManager.station.Status.Set(station.StatusOutgoingCall)
+	// TODO send separate "call request" grpc call to ring other end and wait if auto-answer not enabled
 	conn, err := grpc.Dial(fullAddress, grpc.WithInsecure(), grpc.WithBlock())
 	if err != nil {
 		msg := fmt.Sprintf("Warning: Unable to dial %v: %v", fullAddress, err)
@@ -185,8 +190,12 @@ func (callManager *grpcCallManager) startReceiving(ctx context.Context, errCh ch
 			log.Println("startReceiving: context done")
 			if err := ctx.Err(); err != nil {
 				log.Println("startReceiving: context error", ctx.Err())
-				errCh <- err
-				log.Println("startReceiving: sent context error", ctx.Err())
+				select {
+				case errCh <- err:
+					log.Println("startReceiving: sent context error", ctx.Err())
+				case <-time.After(5 * time.Second):
+					log.Println("WARN: startReceiving: timeout sending context error", ctx.Err())
+				}
 			}
 			return
 		default:
@@ -198,7 +207,12 @@ func (callManager *grpcCallManager) startReceiving(ctx context.Context, errCh ch
 			return
 		} else if err != nil {
 			log.Println("startReceiving: error receiving", err)
-			errCh <- err
+			select {
+			case errCh <- err:
+				log.Println("startReceiving: sent recv error", err)
+			case <-time.After(5 * time.Second):
+				log.Println("WARN: startReceiving: timeout sending recv error", err)
+			}
 			return
 		}
 		data := make([]float32, len(in.Data))
@@ -206,6 +220,15 @@ func (callManager *grpcCallManager) startReceiving(ctx context.Context, errCh ch
 		intercom.SendSpeakerAudio(data)
 	}
 }
+
+//func sendErr(err, errCh) {
+//			select {
+//			case errCh <- err:
+//				log.Println("startReceiving: sent recv error", ctx.Err())
+//			case <-time.After(5 * time.Second):
+//				log.Println("startReceiving: timeout sending recv error", ctx.Err())
+//			}
+//}
 
 // Infinite loop to receive from the mic and stream it to the gRPC server
 func (callManager *grpcCallManager) startSending(ctx context.Context, errCh chan error, sendFn func(*pb.AudioData) error) {
@@ -219,11 +242,16 @@ func (callManager *grpcCallManager) startSending(ctx context.Context, errCh chan
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("startSending: context done")
+			// log.Println("startSending: context done")
 			if err := ctx.Err(); err != nil {
 				// TODO find out how to close connection from here... send nil?
-				log.Println("startSending: context error", err)
-				errCh <- err
+				log.Println("startSending: context done", err)
+				select {
+				case errCh <- err:
+					log.Println("startSending: sent recv error", err)
+				case <-time.After(5 * time.Second):
+					log.Println("WARN: startSending: timeout sending context error", err)
+				}
 			}
 			return
 		default:
@@ -240,8 +268,14 @@ func (callManager *grpcCallManager) startSending(ctx context.Context, errCh chan
 			log.Println("startSending: context done")
 			if err := ctx.Err(); err != nil {
 				// TODO find out how to close connection from here... send nil?
-				log.Println("startSending: context error", err)
+				log.Println("startSending: context done2:", err)
 				errCh <- err
+				select {
+				case errCh <- err:
+					log.Println("startSending: sent context error2", ctx.Err())
+				case <-time.After(5 * time.Second):
+					log.Println("WARN: startSending: timeout sending context error2", ctx.Err())
+				}
 			}
 			return
 		default:
@@ -250,7 +284,12 @@ func (callManager *grpcCallManager) startSending(ctx context.Context, errCh chan
 		err := sendFn(&data)
 		if err != nil {
 			log.Println("startSending: error grpc sending", err)
-			errCh <- err
+			select {
+			case errCh <- err:
+				log.Println("startSending: sent grpc send error:", err)
+			case <-time.After(5 * time.Second):
+				log.Println("WARN: startSending: timeout sending grpc send error:", err)
+			}
 			return
 		}
 	}

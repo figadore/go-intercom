@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/figadore/go-intercom/pkg/call"
 	"github.com/warthog618/gpiod"
@@ -109,12 +110,24 @@ func (s *Station) StartRecording(ctx context.Context, errCh chan error) {
 
 // SendSpeakerAudio takes data and sends it to the speaker audio channel (blocking)
 func (s *Station) SendSpeakerAudio(data []float32) {
-	s.Speaker.AudioCh <- data
+	select {
+	case s.Speaker.AudioCh <- data:
+	case <-time.After(5 * time.Second):
+		log.Println("WARN: SendSpeakerAudio: timeout sending data to speaker.AudioCh")
+
+	}
 }
 
-// SendSpeakerAudio returns data from the mic audio (blocking)
+// ReceiveMicAudio returns data from the mic audio (blocking)
 func (s *Station) ReceiveMicAudio() []float32 {
-	return <-s.Microphone.AudioCh
+	select {
+	case data := <-s.Microphone.AudioCh:
+		return data
+	case <-time.After(5 * time.Second):
+		log.Println("WARN: ReceiveMicAudio: timeout receiving data from mic.AudioCh")
+		return make([]float32, 0)
+
+	}
 }
 
 // Release resources for this device. Only do this on full shut down

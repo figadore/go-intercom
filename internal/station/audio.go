@@ -2,6 +2,7 @@ package station
 
 import (
 	"context"
+	"time"
 
 	"github.com/jfreymuth/pulse"
 
@@ -31,17 +32,30 @@ func (speaker *Speaker) StartPlayback(errCh chan error) {
 	c, err := pulse.NewClient()
 	if err != nil {
 		log.Println("startPlayback: error creating pulse client", err)
-		errCh <- err
+		select {
+		case errCh <- err:
+			log.Println("startPlayback: sent pulse client creation error:", err)
+		case <-time.After(5 * time.Second):
+			log.Println("WARN: startSending: timeout pulse client creation error:", err)
+		}
 		return
 	}
 	defer c.Close()
 	speakerStream, err := c.NewPlayback(pulse.Float32Reader(speaker.Read), pulse.PlaybackSampleRate(SampleRate), pulse.PlaybackBufferSize(FragmentSize))
 	if err != nil {
 		log.Println("startPlayback: error creating speaker stream", err)
-		errCh <- err
+		select {
+		case errCh <- err:
+			log.Println("startPlayback: sent speakerstream creation error:", err)
+		case <-time.After(5 * time.Second):
+			log.Println("WARN: startSending: timeout sending speakerstream creation error:", err)
+		}
 		return
 	}
+	defer log.Println("startPlayback: speakerStream closed")
 	defer speakerStream.Close()
+	defer log.Println("startPlayback: speakerStream stopped")
+	defer speakerStream.Stop()
 	speakerStream.Start()
 	//// Stream to speaker until context is cancelled
 	//<-ctx.Done()
@@ -56,8 +70,12 @@ func (speaker *Speaker) StartPlayback(errCh chan error) {
 	if speakerStream.Error() != nil {
 		err = speakerStream.Error()
 		log.Println("startPlayback: speakerStream error", err)
-		errCh <- err
-		log.Println("startPlayback: sent speakerStream error", err)
+		select {
+		case errCh <- err:
+			log.Println("startPlayback: speakerstream error:", err)
+		case <-time.After(5 * time.Second):
+			log.Println("WARN: startSending: timeout sending speakerstream error:", err)
+		}
 		return
 	}
 }
@@ -83,8 +101,15 @@ func (s *Speaker) Read(buf []float32) (n int, err error) {
 		// receives from the audio channel and places it in the buffer
 		// blocking
 		// TODO check for closed channel
-		data := <-s.AudioCh
-		s.buffered = append(s.buffered, data...)
+
+		select {
+		case data := <-s.AudioCh:
+			s.buffered = append(s.buffered, data...)
+		case <-time.After(5 * time.Second):
+			log.Println("WARN: speaker.Read: timeout receiving from speaker.AudioCh")
+			err = pulse.EndOfData
+			return
+		}
 	}
 	// Copies as much as possible, based on smaller of the two slices
 	copy(buf, s.buffered)
@@ -119,7 +144,13 @@ func (m *Microphone) Write(buf []float32) (n int, err error) {
 	}
 	data := make([]float32, len(buf))
 	copy(data, buf)
-	m.AudioCh <- data
+
+	select {
+	case m.AudioCh <- data:
+
+	case <-time.After(5 * time.Second):
+		log.Println("WARN: mic.Write: timeout sending to mic.AudioCh")
+	}
 	n = len(buf)
 	return n, nil
 }
@@ -131,24 +162,35 @@ func (mic *Microphone) StartRecording(ctx context.Context, errCh chan error) {
 	c, err := pulse.NewClient()
 	if err != nil {
 		log.Println("startRecording: error creating pulse client", err)
-		errCh <- err
+		select {
+		case errCh <- err:
+			log.Println("startRecording: Sent error pulse client creation error", err)
+		case <-time.After(5 * time.Second):
+			log.Println("WARN: startRecording: timeout sending pulse client creation error", err)
+		}
 		return
 	}
 	defer c.Close()
 	micStream, err := c.NewRecord(pulse.Float32Writer(mic.Write), pulse.RecordSampleRate(SampleRate), pulse.RecordBufferFragmentSize(FragmentSize))
 	if err != nil {
 		log.Println("startRecording: error creating new recorder", err)
-		errCh <- err
+		select {
+		case errCh <- err:
+			log.Println("startRecording: Sent error recorder creation error", err)
+		case <-time.After(5 * time.Second):
+			log.Println("WARN: startRecording: timeout sending recorder creation error", err)
+		}
 		return
 
 	}
+	defer log.Println("startRecording: micStream closed")
 	defer micStream.Close()
+	defer log.Println("startRecording: micStream stopped")
+	defer micStream.Stop()
 	micStream.Start() // async
 	// Record until call ends
 	<-ctx.Done()
 	log.Println("startRecording: context done with error:", ctx.Err())
-	micStream.Stop()
-	log.Println("startRecording: stopped")
 	//if err != nil {
 	//	//log.Println("startRecording: sending error", err)
 	//	//errCh <- err
