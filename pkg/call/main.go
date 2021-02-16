@@ -6,12 +6,26 @@ import (
 	"github.com/rs/xid"
 )
 
+type Status int
+
 const (
 	// Bitmask to handle multiple simultaneous states
-	StatusPending = 1 << iota
+	StatusPending = Status(1 << iota)
 	StatusActive
 	StatusTerminating
 )
+
+func (s Status) String() string {
+	switch s {
+	case StatusPending:
+		return "Pending"
+	case StatusActive:
+		return "Active"
+	case StatusTerminating:
+		return "Terminating"
+	}
+	return "Unknown"
+}
 
 type ContextKey string
 
@@ -19,7 +33,7 @@ type Call struct {
 	Id     xid.ID
 	To     string
 	From   string
-	Status int
+	Status Status
 	Cancel func()
 }
 

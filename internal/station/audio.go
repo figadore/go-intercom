@@ -63,9 +63,9 @@ func (speaker *Speaker) StartPlayback(errCh chan error) {
 	// to allow Drain() to return, send pulse.EndOfData from reader
 	// this should happen when the main context is cancelled for any reason
 	// so the speaker stream will remain streaming until program close/crash
-	log.Debugln("startPlayback: Draining speaker stream2")
+	log.Debugln("startPlayback: Draining speaker stream. This should not drain until call exit")
 	speakerStream.Drain()
-	log.Debugln("startPlayback: Drained speaker stream2")
+	log.Debugln("startPlayback: Drained speaker stream")
 	log.Println("Underflow:", speakerStream.Underflow())
 	if speakerStream.Error() != nil {
 		err = speakerStream.Error()
