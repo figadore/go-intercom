@@ -190,14 +190,21 @@ func (callManager *grpcCallManager) startReceiving(ctx context.Context, wg *sync
 			return
 		} else if err != nil {
 			log.Println("startReceiving: error receiving", err)
-			sendWithTimeout(err, errCh)
+			select {
+			case <-ctx.Done():
+				log.Println("startReceiving: context done2")
+			case errCh <- err:
+				log.Println("startReceiving: sent error receiving", err)
+			case <-time.After(5 * time.Second):
+				log.Println("WARN: startReceiving: timeout sending error", err)
+			}
 			return
 		}
 		data := make([]float32, len(in.Data))
 		copy(data, in.Data)
 		select {
 		case <-ctx.Done():
-			log.Println("startReceiving: context done2")
+			log.Println("startReceiving: context done3")
 			if err := ctx.Err(); err != nil {
 				log.Println("startReceiving: context error2", ctx.Err())
 			}
@@ -246,6 +253,7 @@ func (callManager *grpcCallManager) startSending(ctx context.Context, wg *sync.W
 		if err != nil {
 			log.Println("startSending: error grpc sending", err)
 			sendWithTimeout(err, errCh)
+			log.Println("startSending: sent error grpc sending", err)
 			return
 		}
 	}

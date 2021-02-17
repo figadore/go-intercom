@@ -43,6 +43,7 @@ func (speaker *Speaker) StartPlayback(ctx context.Context, wg *sync.WaitGroup, e
 	if err != nil {
 		log.Println("startPlayback: error creating pulse client", err)
 		sendWithTimeout(err, errCh)
+		log.Println("startPlayback: sent error creating pulse client", err)
 		return
 	}
 	defer c.Close()
@@ -50,6 +51,7 @@ func (speaker *Speaker) StartPlayback(ctx context.Context, wg *sync.WaitGroup, e
 	if err != nil {
 		log.Println("startPlayback: error creating speaker stream", err)
 		sendWithTimeout(err, errCh)
+		log.Println("startPlayback: sent error creating speaker stream", err)
 		return
 	}
 	defer log.Println("startPlayback: speakerStream closed")
@@ -59,7 +61,7 @@ func (speaker *Speaker) StartPlayback(ctx context.Context, wg *sync.WaitGroup, e
 	speakerStream.Start()
 	// Stream to speaker until context is cancelled
 	<-ctx.Done()
-	// log.Println("startPlayback: context done:", ctx.Err())
+	log.Println("startPlayback: context done:", ctx.Err())
 	// to allow Drain() to return, send pulse.EndOfData from reader. trigger this by closing the done channel
 	close(speaker.done)
 	log.Debugln("startPlayback: Draining speaker stream. This should not drain until call exit")
@@ -70,6 +72,7 @@ func (speaker *Speaker) StartPlayback(ctx context.Context, wg *sync.WaitGroup, e
 		err = speakerStream.Error()
 		log.Println("startPlayback: speakerStream error", err)
 		sendWithTimeout(err, errCh)
+		log.Println("startPlayback: sent speakerStream error", err)
 		return
 	}
 }
@@ -86,7 +89,7 @@ func (s *Speaker) Read(buf []float32) (n int, err error) {
 	case <-s.done:
 		// close(s.audioCh)
 		err = pulse.EndOfData
-		log.Println("Speaker.Read: station.Context.Done(), sending EndOfData error", err)
+		log.Println("Speaker.Read: done channel closed, sending EndOfData error", err)
 		return
 	default:
 		break
@@ -100,7 +103,7 @@ func (s *Speaker) Read(buf []float32) (n int, err error) {
 		case <-s.done:
 			// close(s.audioCh)
 			err = pulse.EndOfData
-			log.Println("Speaker.Read: station.Context.Done(), sending EndOfData error", err)
+			log.Println("Speaker.Read: done channel closed2, sending EndOfData error", err)
 			return
 		case data := <-s.AudioCh:
 			s.buffered = append(s.buffered, data...)
@@ -146,6 +149,9 @@ func (m *Microphone) Write(buf []float32) (n int, err error) {
 
 	select {
 	case m.AudioCh <- data:
+	case <-m.done:
+		// close(m.audioCh)
+		return n, pulse.EndOfData
 
 	case <-time.After(5 * time.Second):
 		log.Println("WARN: mic.Write: timeout sending to mic.AudioCh")
@@ -163,6 +169,7 @@ func (mic *Microphone) StartRecording(ctx context.Context, wg *sync.WaitGroup, e
 	if err != nil {
 		log.Println("startRecording: error creating pulse client", err)
 		sendWithTimeout(err, errCh)
+		log.Println("startRecording: sent error creating pulse client", err)
 		return
 	}
 	defer c.Close()
@@ -170,6 +177,7 @@ func (mic *Microphone) StartRecording(ctx context.Context, wg *sync.WaitGroup, e
 	if err != nil {
 		log.Println("startRecording: error creating new recorder", err)
 		sendWithTimeout(err, errCh)
+		log.Println("startRecording: sent error creating new recorder", err)
 		return
 
 	}
@@ -184,6 +192,9 @@ func (mic *Microphone) StartRecording(ctx context.Context, wg *sync.WaitGroup, e
 	// Record until call ends
 	<-ctx.Done()
 	log.Println("startRecording: context done with error:", ctx.Err())
+	log.Println("startRecording: closing mic.done channel")
+	close(mic.done)
+	log.Println("startRecording: closed mic.done channel")
 	//if err != nil {
 	//	//log.Println("startRecording: sending error", err)
 	//	//errCh <- err
