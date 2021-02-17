@@ -122,7 +122,7 @@ func (i *physicalInputs) callAll() {
 }
 
 func (i *physicalInputs) hangup() {
-	i.station.hangup()
+	i.station.hangupAll()
 }
 
 func (i *physicalInputs) setVolume(percent int) {

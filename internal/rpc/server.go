@@ -69,9 +69,8 @@ func (s *Server) DuplexCall(clientStream pb.Intercom_DuplexCallServer) error {
 		}
 	}
 	log.Println("Server accepting call")
-	// update status appropriately
+	// Update status appropriately
 	s.station.Status.Clear(station.StatusIncomingCall)
-	// also add a timeout in case accept not received, reject
 	streamCtx := clientStream.Context()
 	p, _ := peer.FromContext(streamCtx)
 	addrPort := p.Addr.String()
@@ -80,12 +79,11 @@ func (s *Server) DuplexCall(clientStream pb.Intercom_DuplexCallServer) error {
 	from := addrPort
 
 	log.Println("Start server side DuplexCall, receiving from ", addrPort)
-	// TODO use new context, or streamCtx?
-	grpcCtx, cancel := context.WithCancel(context.Background())
+	grpcCtx, cancel := context.WithCancel(streamCtx)
 	// TODO figure out whether this cancel should be the one in the Call object
 	defer cancel()
 	callManager := s.station.CallManager.(*grpcCallManager)
-	err := callManager.duplexCall(grpcCtx, to, from, clientStream)
+	err := callManager.duplexCall(grpcCtx, to, from, clientStream, cancel)
 	log.Println("Server-side duplex call ended with:", err)
 	return err
 }

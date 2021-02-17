@@ -27,12 +27,30 @@ func (s Status) String() string {
 
 type ContextKey string
 
+type CallId xid.ID
+
+func NewCallId() CallId {
+	return CallId(xid.New())
+}
+
 type Call struct {
-	Id     xid.ID
+	Id     CallId
 	To     string
 	From   string
 	Status Status
-	Cancel func()
+	cancel func()
+	// TODO add pointer to call manager? or at least a callback when when cancel is called?
+}
+
+func New(callId CallId, to string, from string, cancel func()) *Call {
+	call := Call{
+		Id:     callId,
+		To:     to,
+		From:   from,
+		cancel: cancel,
+		Status: StatusActive,
+	}
+	return &call
 }
 
 //type Caller interface {
@@ -42,12 +60,12 @@ type Call struct {
 
 func (c *Call) Hangup() {
 	c.Status = StatusTerminating
-	c.Cancel()
+	c.cancel()
 }
 
 type Manager interface {
 	CallAll()
-	Hangup()
+	HangupAll()
 	AcceptCall()
 	RejectCall()
 	AcceptCh() chan bool
@@ -57,7 +75,7 @@ type Manager interface {
 }
 
 type GenericManager struct {
-	CallList map[xid.ID]Call
+	CallList map[CallId]*Call
 }
 
 func (m *GenericManager) HasCalls() bool {

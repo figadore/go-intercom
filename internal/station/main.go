@@ -73,8 +73,8 @@ func (s *Station) callAll() {
 	s.CallManager.CallAll()
 }
 
-func (s *Station) hangup() {
-	s.CallManager.Hangup()
+func (s *Station) hangupAll() {
+	s.CallManager.HangupAll()
 }
 
 func getOutputs(dotEnv map[string]string) Outputs {

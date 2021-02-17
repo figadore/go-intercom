@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/xid"
 	"google.golang.org/grpc"
 
 	"github.com/figadore/go-intercom/internal/log"
@@ -23,7 +22,7 @@ type grpcCallManager struct {
 	acceptCh chan bool
 }
 
-func (callManager *grpcCallManager) Hangup() {
+func (callManager *grpcCallManager) HangupAll() {
 	for _, c := range callManager.CallList {
 		c.Hangup()
 		callManager.removeCall(c)
@@ -36,7 +35,7 @@ func NewCallManager(intercom *station.Station) call.Manager {
 		station:  intercom,
 		acceptCh: make(chan bool),
 	}
-	m.CallList = make(map[xid.ID]call.Call)
+	m.CallList = make(map[call.CallId]*call.Call)
 	return m
 }
 
@@ -48,7 +47,7 @@ func (callManager *grpcCallManager) SetStation(s *station.Station) {
 	callManager.station = s
 }
 
-func (callManager *grpcCallManager) addCall(c call.Call) {
+func (callManager *grpcCallManager) addCall(c *call.Call) {
 	callManager.station.Status.Set(station.StatusCallConnected)
 	callManager.station.Status.Clear(station.StatusOutgoingCall)
 	callManager.station.Status.Clear(station.StatusIncomingCall)
@@ -61,7 +60,7 @@ func (callManager *grpcCallManager) AcceptCall() {
 func (callManager *grpcCallManager) RejectCall() {
 }
 
-func (callManager *grpcCallManager) removeCall(c call.Call) {
+func (callManager *grpcCallManager) removeCall(c *call.Call) {
 	delete(callManager.CallList, c.Id)
 	if len(callManager.CallList) == 0 {
 		_ = callManager.station.Status.Clear(station.StatusCallConnected)
@@ -73,26 +72,19 @@ type streamer interface {
 	Recv() (*pb.AudioData, error)
 }
 
-func (callManager *grpcCallManager) duplexCall(parentContext context.Context, from string, to string, stream streamer) error {
+func (callManager *grpcCallManager) duplexCall(parentContext context.Context, from string, to string, stream streamer, cancel func()) error {
 	defer log.Println("callManager.duplexCall: Exiting, no more error receivable")
-	callId := xid.New()
-	callContext, cancel := context.WithCancel(context.WithValue(parentContext, call.ContextKey("id"), callId))
-	defer log.Debugln("Cancelled call context")
-	defer cancel()
-	defer log.Debugln("Cancelling call context")
-	c := call.Call{
-		Id:     callId,
-		To:     to,
-		From:   from,
-		Cancel: cancel,
-		Status: call.StatusActive,
-	}
-	// TODO client side needs to cancel call's context when disconnected. see "startSending: error grpc sending"
+	callId := call.NewCallId()
+	callContext := context.WithValue(parentContext, call.ContextKey("id"), callId)
+	c := call.New(callId, to, from, cancel)
+	defer log.Debugln("duplexCall: call.Hangup() complete")
+	defer c.Hangup()
+	defer log.Debugln("duplexCall: call.Hangup() is next, should cancel goroutines' contexts")
+	callManager.addCall(c)
+	defer callManager.removeCall(c)
 	log.Println("Starting call with id:", callContext.Value(call.ContextKey("id")))
 	errCh := make(chan error)
 	intercom := callManager.station
-	callManager.addCall(c)
-	defer callManager.removeCall(c)
 	var wg sync.WaitGroup
 	wg.Add(4)
 	go callManager.startReceiving(callContext, &wg, errCh, stream.Recv)
@@ -103,10 +95,12 @@ func (callManager *grpcCallManager) duplexCall(parentContext context.Context, fr
 	select {
 	case <-callContext.Done():
 		log.Printf("callManager.duplexCall: context.Done: %v", callContext.Err())
+		cancel()
 		wg.Wait()
 		return callContext.Err()
 	case err := <-errCh:
 		log.Printf("duplexCall: Received error on errCh: %v", err)
+		cancel()
 		wg.Wait()
 		return err
 	}
@@ -133,7 +127,7 @@ func (callManager *grpcCallManager) outgoingCall(address string) {
 	from := "self"
 	log.Println("outgoingCall: dialing", fullAddress)
 	_ = callManager.station.Status.Set(station.StatusOutgoingCall)
-	// TODO send separate "call request" grpc call to ring other end and wait if auto-answer not enabled
+	// TODO send separate "call request" grpc call to ring other end and wait if auto-answer not enabled? or set status once first successful send/receive happens?
 	conn, err := grpc.Dial(fullAddress, grpc.WithInsecure(), grpc.WithBlock())
 	if err != nil {
 		msg := fmt.Sprintf("Warning: Unable to dial %v: %v", fullAddress, err)
@@ -145,8 +139,6 @@ func (callManager *grpcCallManager) outgoingCall(address string) {
 	defer conn.Close()
 	defer log.Debugln("outgoingCall: conn.Closing")
 	client := pb.NewIntercomClient(conn)
-	// TODO ensure this is the correct context to send
-	// TODO figure out whether this cancel should be the one in the Call object
 	grpcCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	serverStream, err := client.DuplexCall(grpcCtx)
@@ -160,7 +152,7 @@ func (callManager *grpcCallManager) outgoingCall(address string) {
 		_ = serverStream.CloseSend()
 		log.Println("outgoingCall: CloseSend() complete")
 	}()
-	err = callManager.duplexCall(grpcCtx, to, from, serverStream)
+	err = callManager.duplexCall(grpcCtx, to, from, serverStream, cancel)
 	log.Println("outgoingCall: client-side duplex call ended with:", err)
 }
 
@@ -243,8 +235,6 @@ func (callManager *grpcCallManager) startSending(ctx context.Context, wg *sync.W
 			log.Println("WARN: timeout receiving from mic audio channel")
 			return
 		case <-ctx.Done():
-			// TODO find out how to close connection from here... cancel grpc context?
-			// TODO cancel grpc stream context (which means passing it in? or canel at a higher level)
 			log.Println("startSending: context done")
 			_ = sendFn(nil)
 			return
@@ -254,7 +244,6 @@ func (callManager *grpcCallManager) startSending(ctx context.Context, wg *sync.W
 		err := sendFn(&data)
 		if err != nil {
 			log.Println("startSending: error grpc sending", err)
-			// TODO tell call manager to removeCall. ensure removeCall calls cancel
 			sendWithTimeout(err, errCh)
 			return
 		}
