@@ -36,11 +36,11 @@ func New(ctx context.Context, dotEnv map[string]string, callManagerFactory func(
 	outputs := getOutputs(dotEnv)
 	speaker := Speaker{
 		AudioCh: make(chan []float32),
-		Context: ctx,
+		done:    make(chan struct{}),
 	}
 	mic := Microphone{
 		AudioCh: make(chan []float32),
-		Context: ctx,
+		done:    make(chan struct{}),
 	}
 	station := Station{
 		Speaker:    &speaker,

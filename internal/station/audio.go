@@ -18,7 +18,7 @@ const (
 type Speaker struct {
 	AudioCh  chan []float32
 	buffered []float32
-	Context  context.Context
+	done     chan struct{}
 }
 
 func (s *Speaker) Close() {
@@ -57,12 +57,11 @@ func (speaker *Speaker) StartPlayback(ctx context.Context, wg *sync.WaitGroup, e
 	defer log.Println("startPlayback: speakerStream stopped")
 	defer speakerStream.Stop()
 	speakerStream.Start()
-	//// Stream to speaker until context is cancelled
-	//<-ctx.Done()
-	//log.Println("startPlayback: context done:", ctx.Err())
-	// to allow Drain() to return, send pulse.EndOfData from reader
-	// this should happen when the main context is cancelled for any reason
-	// so the speaker stream will remain streaming until program close/crash
+	// Stream to speaker until context is cancelled
+	<-ctx.Done()
+	// log.Println("startPlayback: context done:", ctx.Err())
+	// to allow Drain() to return, send pulse.EndOfData from reader. trigger this by closing the done channel
+	close(speaker.done)
 	log.Debugln("startPlayback: Draining speaker stream. This should not drain until call exit")
 	speakerStream.Drain()
 	log.Debugln("startPlayback: Drained speaker stream")
@@ -84,7 +83,7 @@ func (speaker *Speaker) StartPlayback(ctx context.Context, wg *sync.WaitGroup, e
 // bytes and return. The next Read will receive from the audio channel
 func (s *Speaker) Read(buf []float32) (n int, err error) {
 	select {
-	case <-s.Context.Done():
+	case <-s.done:
 		// close(s.audioCh)
 		err = pulse.EndOfData
 		log.Println("Speaker.Read: station.Context.Done(), sending EndOfData error", err)
@@ -121,7 +120,7 @@ func (s *Speaker) Read(buf []float32) (n int, err error) {
 
 type Microphone struct {
 	AudioCh chan []float32
-	Context context.Context
+	done    chan struct{}
 }
 
 func (m *Microphone) Close() {
@@ -131,7 +130,7 @@ func (m *Microphone) Close() {
 // Write sends the data from the microphone buffer and sends it to the audio data channel
 func (m *Microphone) Write(buf []float32) (n int, err error) {
 	select {
-	case <-m.Context.Done():
+	case <-m.done:
 		// close(m.audioCh)
 		return n, pulse.EndOfData
 	default:

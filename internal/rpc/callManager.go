@@ -72,6 +72,7 @@ type streamer interface {
 	Recv() (*pb.AudioData, error)
 }
 
+// A cancel function is passed in here so that the grpc stream's context can be cancelled
 func (callManager *grpcCallManager) duplexCall(parentContext context.Context, from string, to string, stream streamer, cancel func()) error {
 	defer log.Println("callManager.duplexCall: Exiting, no more error receivable")
 	callId := call.NewCallId()
@@ -81,7 +82,7 @@ func (callManager *grpcCallManager) duplexCall(parentContext context.Context, fr
 	defer c.Hangup()
 	defer log.Debugln("duplexCall: call.Hangup() is next, should cancel goroutines' contexts")
 	callManager.addCall(c)
-	defer callManager.removeCall(c)
+	defer callManager.removeCall(c) // TODO remove this when c.Hangup() removes the call
 	log.Println("Starting call with id:", callContext.Value(call.ContextKey("id")))
 	errCh := make(chan error)
 	intercom := callManager.station
