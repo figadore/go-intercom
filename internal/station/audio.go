@@ -2,6 +2,7 @@ package station
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/jfreymuth/pulse"
@@ -24,32 +25,31 @@ func (s *Speaker) Close() {
 	close(s.AudioCh)
 }
 
+func sendWithTimeout(err error, errCh chan error) {
+	select {
+	case errCh <- err:
+	case <-time.After(5 * time.Second):
+		log.Println("WARN: timeout sending error", err)
+	}
+}
+
 // startPlayback receives data from a channel and plays through the speaker
 // func (speaker *Speaker) StartPlayback(ctx context.Context, errCh chan error) {
-func (speaker *Speaker) StartPlayback(errCh chan error) {
+func (speaker *Speaker) StartPlayback(ctx context.Context, wg *sync.WaitGroup, errCh chan error) {
 	log.Println("startPlayback: enter")
 	defer log.Println("startPlayback: exit")
+	defer wg.Done()
 	c, err := pulse.NewClient()
 	if err != nil {
 		log.Println("startPlayback: error creating pulse client", err)
-		select {
-		case errCh <- err:
-			log.Println("startPlayback: sent pulse client creation error:", err)
-		case <-time.After(5 * time.Second):
-			log.Println("WARN: startSending: timeout pulse client creation error:", err)
-		}
+		sendWithTimeout(err, errCh)
 		return
 	}
 	defer c.Close()
 	speakerStream, err := c.NewPlayback(pulse.Float32Reader(speaker.Read), pulse.PlaybackSampleRate(SampleRate), pulse.PlaybackBufferSize(FragmentSize))
 	if err != nil {
 		log.Println("startPlayback: error creating speaker stream", err)
-		select {
-		case errCh <- err:
-			log.Println("startPlayback: sent speakerstream creation error:", err)
-		case <-time.After(5 * time.Second):
-			log.Println("WARN: startSending: timeout sending speakerstream creation error:", err)
-		}
+		sendWithTimeout(err, errCh)
 		return
 	}
 	defer log.Println("startPlayback: speakerStream closed")
@@ -70,12 +70,7 @@ func (speaker *Speaker) StartPlayback(errCh chan error) {
 	if speakerStream.Error() != nil {
 		err = speakerStream.Error()
 		log.Println("startPlayback: speakerStream error", err)
-		select {
-		case errCh <- err:
-			log.Println("startPlayback: speakerstream error:", err)
-		case <-time.After(5 * time.Second):
-			log.Println("WARN: startSending: timeout sending speakerstream error:", err)
-		}
+		sendWithTimeout(err, errCh)
 		return
 	}
 }
@@ -156,38 +151,32 @@ func (m *Microphone) Write(buf []float32) (n int, err error) {
 }
 
 // startRecording gets data from the microphone and sends it to the audio channel
-func (mic *Microphone) StartRecording(ctx context.Context, errCh chan error) {
+func (mic *Microphone) StartRecording(ctx context.Context, wg *sync.WaitGroup, errCh chan error) {
 	log.Println("startRecording: enter")
 	defer log.Println("startRecording: exit")
+	defer wg.Done()
 	c, err := pulse.NewClient()
 	if err != nil {
 		log.Println("startRecording: error creating pulse client", err)
-		select {
-		case errCh <- err:
-			log.Println("startRecording: Sent error pulse client creation error", err)
-		case <-time.After(5 * time.Second):
-			log.Println("WARN: startRecording: timeout sending pulse client creation error", err)
-		}
+		sendWithTimeout(err, errCh)
 		return
 	}
 	defer c.Close()
 	micStream, err := c.NewRecord(pulse.Float32Writer(mic.Write), pulse.RecordSampleRate(SampleRate), pulse.RecordBufferFragmentSize(FragmentSize))
 	if err != nil {
 		log.Println("startRecording: error creating new recorder", err)
-		select {
-		case errCh <- err:
-			log.Println("startRecording: Sent error recorder creation error", err)
-		case <-time.After(5 * time.Second):
-			log.Println("WARN: startRecording: timeout sending recorder creation error", err)
-		}
+		sendWithTimeout(err, errCh)
 		return
 
 	}
+	log.Println("startRecording: created mic stream")
 	defer log.Println("startRecording: micStream closed")
 	defer micStream.Close()
 	defer log.Println("startRecording: micStream stopped")
 	defer micStream.Stop()
+	log.Println("startRecording: starting mic stream")
 	micStream.Start() // async
+	log.Println("startRecording: started mic stream, waiting for ctx.Done()")
 	// Record until call ends
 	<-ctx.Done()
 	log.Println("startRecording: context done with error:", ctx.Err())

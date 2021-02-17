@@ -1,7 +1,7 @@
 package rpc
 
 import (
-	//"context"
+	"context"
 	"net"
 	"time"
 
@@ -80,8 +80,12 @@ func (s *Server) DuplexCall(clientStream pb.Intercom_DuplexCallServer) error {
 	from := addrPort
 
 	log.Println("Start server side DuplexCall, receiving from ", addrPort)
+	// TODO use new context, or streamCtx?
+	grpcCtx, cancel := context.WithCancel(context.Background())
+	// TODO figure out whether this cancel should be the one in the Call object
+	defer cancel()
 	callManager := s.station.CallManager.(*grpcCallManager)
-	err := callManager.duplexCall(s.station.Context, to, from, clientStream)
+	err := callManager.duplexCall(grpcCtx, to, from, clientStream)
 	log.Println("Server-side duplex call ended with:", err)
 	return err
 }

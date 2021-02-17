@@ -1,8 +1,6 @@
 package call
 
 import (
-	"context"
-
 	"github.com/rs/xid"
 )
 
@@ -48,7 +46,7 @@ func (c *Call) Hangup() {
 }
 
 type Manager interface {
-	CallAll(context.Context)
+	CallAll()
 	Hangup()
 	AcceptCall()
 	RejectCall()

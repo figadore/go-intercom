@@ -36,12 +36,12 @@ The intercom station object is the primary point of contact for various componen
 [Call]s are managed by the [CallManager]. Whether a call is incoming or outoing, the same duplexCall function is used (though this might change when multi-way calling is added). Each call object has it's own context and cancel method, so that it can be cancelled from the inputs through the call manager
 
 # TODO
-* fix iota constants
-* make constants have a type, implement stringer for logging
+* make startSending/startReceiving part of the call object?
+* call manager removes call from list, or call.hangup through callmananger?
+* find a way to end stream from the server side if end button pressed (or program interrupted)
 * ensure no contexts are used incorrectly. args only, no struct fields. request-scoped only. use something else for global shutdown/cancel?
 * add a way to interact with running programs (cli version of buttons)
 * fix compounding lag
-* allow multiple audio streams, separate speaker object from buffers
+* allow multiple audio streams, separate speaker object from buffers (attach buffers to Call?)
 * fix status updates, seems to be a race condition somewhere. https://golang.org/doc/articles/race_detector.html ?
 * try out webrtc for conference calling
-* set main duplexCall method to run a waitgroup that waits for all goroutines

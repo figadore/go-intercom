@@ -118,7 +118,7 @@ func (i *physicalInputs) placeCall(to []string) {
 func (i *physicalInputs) callAll() {
 	log.Debugln("physicalInputs.callAll: enter")
 	defer log.Debugln("physicalInputs.callAll: exit")
-	i.station.callAll(i.station.Context)
+	i.station.callAll()
 }
 
 func (i *physicalInputs) hangup() {

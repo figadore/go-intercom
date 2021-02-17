@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/rs/xid"
@@ -76,6 +77,9 @@ func (callManager *grpcCallManager) duplexCall(parentContext context.Context, fr
 	defer log.Println("callManager.duplexCall: Exiting, no more error receivable")
 	callId := xid.New()
 	callContext, cancel := context.WithCancel(context.WithValue(parentContext, call.ContextKey("id"), callId))
+	defer log.Debugln("Cancelled call context")
+	defer cancel()
+	defer log.Debugln("Cancelling call context")
 	c := call.Call{
 		Id:     callId,
 		To:     to,
@@ -83,66 +87,45 @@ func (callManager *grpcCallManager) duplexCall(parentContext context.Context, fr
 		Cancel: cancel,
 		Status: call.StatusActive,
 	}
-	defer cancel()
+	// TODO client side needs to cancel call's context when disconnected. see "startSending: error grpc sending"
 	log.Println("Starting call with id:", callContext.Value(call.ContextKey("id")))
-	receiveErrCh := make(chan error)
-	sendErrCh := make(chan error)
-	playErrCh := make(chan error)
-	recordErrCh := make(chan error)
+	errCh := make(chan error)
 	intercom := callManager.station
 	callManager.addCall(c)
 	defer callManager.removeCall(c)
-	go callManager.startReceiving(callContext, receiveErrCh, stream.Recv)
-	go intercom.StartPlayback(playErrCh)
-	go intercom.StartRecording(callContext, recordErrCh)
-	go callManager.startSending(callContext, sendErrCh, stream.Send)
+	var wg sync.WaitGroup
+	wg.Add(4)
+	go callManager.startReceiving(callContext, &wg, errCh, stream.Recv)
+	go intercom.StartPlayback(callContext, &wg, errCh)
+	go intercom.StartRecording(callContext, &wg, errCh)
+	go callManager.startSending(callContext, &wg, errCh, stream.Send)
 	log.Debugln("DuplexCall: go routines started")
 	select {
 	case <-callContext.Done():
 		log.Printf("callManager.duplexCall: context.Done: %v", callContext.Err())
+		wg.Wait()
 		return callContext.Err()
-	case err := <-sendErrCh:
-		log.Printf("callManager.duplexCall: sendErrCh: %v", err)
+	case err := <-errCh:
+		log.Printf("duplexCall: Received error on errCh: %v", err)
+		wg.Wait()
 		return err
-	case err := <-receiveErrCh:
-		log.Printf("callManager.duplexCall: receiveErrCh: %v", err)
-		return err
-	case err := <-playErrCh:
-		log.Printf("callManager.duplexCall: playErrCh: %v", err)
-		return err
-	case err := <-recordErrCh:
-		log.Printf("callManager.duplexCall: recordErrCh: %v", err)
-		return err
-	case <-parentContext.Done():
-		log.Printf("callManager.duplexCall: parentContext.Done: %v. didn't know this was possible. chosen at random?", parentContext.Err())
-		<-callContext.Done()
-		log.Printf("callManager.duplexCall: ok, context.Done too: %v", callContext.Err())
-		return parentContext.Err()
 	}
 }
 
 // CallAll calls every intercom station it knows about
 // ctx is station context/main context from cmd
-func (callManager *grpcCallManager) CallAll(mainContext context.Context) {
+func (callManager *grpcCallManager) CallAll() {
 	log.Debugln("Debug: callManager.CallAll: enter")
 	defer log.Debugln("Debug: callManager.CallAll: exit")
 	intercoms := os.Args[1:]
 	for _, address := range intercoms {
-		go callManager.outgoingCall(mainContext, address)
+		go callManager.outgoingCall(address)
 		// callManager.outgoingCall(mainContext, address)
 	}
 }
 
-func (callManager *grpcCallManager) outgoingCall(mainContext context.Context, address string) {
+func (callManager *grpcCallManager) outgoingCall(address string) {
 	log.Println("outgoingCall: Start client side DuplexCall")
-	select {
-	case <-mainContext.Done():
-		msg := fmt.Sprintf("outgoingCall: Error: parent context cancelled: %v", mainContext.Err())
-		log.Println(msg)
-		return
-	default:
-		break
-	}
 
 	// Initiate a grpc connection with the server
 	fullAddress := fmt.Sprintf("192.168.0.%s%s", address, port)
@@ -162,7 +145,11 @@ func (callManager *grpcCallManager) outgoingCall(mainContext context.Context, ad
 	defer conn.Close()
 	defer log.Debugln("outgoingCall: conn.Closing")
 	client := pb.NewIntercomClient(conn)
-	serverStream, err := client.DuplexCall(callManager.station.Context)
+	// TODO ensure this is the correct context to send
+	// TODO figure out whether this cancel should be the one in the Call object
+	grpcCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serverStream, err := client.DuplexCall(grpcCtx)
 	if err != nil {
 		log.Printf("outgoingCall: error creating duplex call client: %v", err)
 		return
@@ -173,14 +160,23 @@ func (callManager *grpcCallManager) outgoingCall(mainContext context.Context, ad
 		_ = serverStream.CloseSend()
 		log.Println("outgoingCall: CloseSend() complete")
 	}()
-	err = callManager.duplexCall(mainContext, to, from, serverStream)
+	err = callManager.duplexCall(grpcCtx, to, from, serverStream)
 	log.Println("outgoingCall: client-side duplex call ended with:", err)
 }
 
+func sendWithTimeout(err error, errCh chan error) {
+	select {
+	case errCh <- err:
+	case <-time.After(5 * time.Second):
+		log.Println("WARN: timeout sending error", err)
+	}
+}
+
 // Infinite loop to receive from the gRPC stream and send it to the speaker
-func (callManager *grpcCallManager) startReceiving(ctx context.Context, errCh chan error, recvFn func() (*pb.AudioData, error)) {
+func (callManager *grpcCallManager) startReceiving(ctx context.Context, wg *sync.WaitGroup, errCh chan error, recvFn func() (*pb.AudioData, error)) {
 	log.Println("startReceiving: enter")
 	defer log.Println("startReceiving: exit")
+	defer wg.Done()
 	intercom := callManager.station
 	// log.SetPrefix("startReceiving: ")
 	// log.SetFlags(log.Ldate | log.Lmicroseconds)
@@ -190,12 +186,6 @@ func (callManager *grpcCallManager) startReceiving(ctx context.Context, errCh ch
 			log.Println("startReceiving: context done")
 			if err := ctx.Err(); err != nil {
 				log.Println("startReceiving: context error", ctx.Err())
-				select {
-				case errCh <- err:
-					log.Println("startReceiving: sent context error", ctx.Err())
-				case <-time.After(5 * time.Second):
-					log.Println("WARN: startReceiving: timeout sending context error", ctx.Err())
-				}
 			}
 			return
 		default:
@@ -207,17 +197,20 @@ func (callManager *grpcCallManager) startReceiving(ctx context.Context, errCh ch
 			return
 		} else if err != nil {
 			log.Println("startReceiving: error receiving", err)
-			select {
-			case errCh <- err:
-				log.Println("startReceiving: sent recv error", err)
-			case <-time.After(5 * time.Second):
-				log.Println("WARN: startReceiving: timeout sending recv error", err)
-			}
+			sendWithTimeout(err, errCh)
 			return
 		}
 		data := make([]float32, len(in.Data))
 		copy(data, in.Data)
-		intercom.SendSpeakerAudio(data)
+		select {
+		case <-ctx.Done():
+			log.Println("startReceiving: context done2")
+			if err := ctx.Err(); err != nil {
+				log.Println("startReceiving: context error2", ctx.Err())
+			}
+			return
+		case intercom.SpeakerAudioCh() <- data:
+		}
 	}
 }
 
@@ -231,9 +224,10 @@ func (callManager *grpcCallManager) startReceiving(ctx context.Context, errCh ch
 //}
 
 // Infinite loop to receive from the mic and stream it to the gRPC server
-func (callManager *grpcCallManager) startSending(ctx context.Context, errCh chan error, sendFn func(*pb.AudioData) error) {
+func (callManager *grpcCallManager) startSending(ctx context.Context, wg *sync.WaitGroup, errCh chan error, sendFn func(*pb.AudioData) error) {
 	log.Println("startSending: enter")
 	defer log.Println("startSending: exit")
+	defer wg.Done()
 	intercom := callManager.station
 	// when streaming ends, client receives io.EOF
 	// not sure how to initiate this on the server side though
@@ -241,55 +235,27 @@ func (callManager *grpcCallManager) startSending(ctx context.Context, errCh chan
 	var data pb.AudioData
 	for {
 		select {
-		case <-ctx.Done():
-			// log.Println("startSending: context done")
-			if err := ctx.Err(); err != nil {
-				// TODO find out how to close connection from here... send nil?
-				log.Println("startSending: context done", err)
-				select {
-				case errCh <- err:
-					log.Println("startSending: sent recv error", err)
-				case <-time.After(5 * time.Second):
-					log.Println("WARN: startSending: timeout sending context error", err)
-				}
+		case audioBytes = <-intercom.MicAudioCh():
+			data = pb.AudioData{
+				Data: audioBytes,
 			}
+		case <-time.After(5 * time.Second):
+			log.Println("WARN: timeout receiving from mic audio channel")
 			return
-		default:
-			break
-		}
-		// blocking
-		// TODO move this to the channel select?
-		audioBytes = intercom.ReceiveMicAudio()
-		data = pb.AudioData{
-			Data: audioBytes,
-		}
-		select {
 		case <-ctx.Done():
+			// TODO find out how to close connection from here... cancel grpc context?
+			// TODO cancel grpc stream context (which means passing it in? or canel at a higher level)
 			log.Println("startSending: context done")
-			if err := ctx.Err(); err != nil {
-				// TODO find out how to close connection from here... send nil?
-				log.Println("startSending: context done2:", err)
-				errCh <- err
-				select {
-				case errCh <- err:
-					log.Println("startSending: sent context error2", ctx.Err())
-				case <-time.After(5 * time.Second):
-					log.Println("WARN: startSending: timeout sending context error2", ctx.Err())
-				}
-			}
+			_ = sendFn(nil)
 			return
-		default:
-			break
+			// default:
+			//	break
 		}
 		err := sendFn(&data)
 		if err != nil {
 			log.Println("startSending: error grpc sending", err)
-			select {
-			case errCh <- err:
-				log.Println("startSending: sent grpc send error:", err)
-			case <-time.After(5 * time.Second):
-				log.Println("WARN: startSending: timeout sending grpc send error:", err)
-			}
+			// TODO tell call manager to removeCall. ensure removeCall calls cancel
+			sendWithTimeout(err, errCh)
 			return
 		}
 	}
