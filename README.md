@@ -36,6 +36,7 @@ The intercom station object is the primary point of contact for various componen
 [Call]s are managed by the [CallManager]. Whether a call is incoming or outoing, the same duplexCall function is used (though this might change when multi-way calling is added). Each call object has it's own context and cancel method, so that it can be cancelled from the inputs through the call manager
 
 # TODO
+* handle second sigint more extremely
 * find a way to end stream from the server side if end button pressed (or program interrupted). see if recent context updates did it
 * call manager removes call from list, or call.hangup through callmananger?
   * add pointer in call struct to call manager? or at least a callback when when cancel is called?

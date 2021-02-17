@@ -99,11 +99,14 @@ func getInputs(ctx context.Context, dotEnv map[string]string, station *Station) 
 
 // StartPlayback begins the station's speaker playback
 func (s *Station) StartPlayback(ctx context.Context, wg *sync.WaitGroup, errCh chan error) {
+	// TODO create a new speaker here, or maybe just a new audio stream
+	s.Speaker.done = make(chan struct{})
 	s.Speaker.StartPlayback(ctx, wg, errCh)
 }
 
 // StartRecording begins the station's mic recording/listening
 func (s *Station) StartRecording(ctx context.Context, wg *sync.WaitGroup, errCh chan error) {
+	s.Microphone.done = make(chan struct{})
 	s.Microphone.StartRecording(ctx, wg, errCh)
 }
 

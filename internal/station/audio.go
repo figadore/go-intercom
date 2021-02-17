@@ -97,6 +97,11 @@ func (s *Speaker) Read(buf []float32) (n int, err error) {
 		// TODO check for closed channel
 
 		select {
+		case <-s.done:
+			// close(s.audioCh)
+			err = pulse.EndOfData
+			log.Println("Speaker.Read: station.Context.Done(), sending EndOfData error", err)
+			return
 		case data := <-s.AudioCh:
 			s.buffered = append(s.buffered, data...)
 		case <-time.After(5 * time.Second):
