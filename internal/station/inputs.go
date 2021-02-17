@@ -74,6 +74,8 @@ func (i *physicalInputs) blackButtonHandler(gpiod.LineEvent) {
 	if i.station.Status.Has(StatusDoNotDisturb) && i.station.Status.Has(StatusIncomingCall) {
 		log.Debugln("accepting call")
 		i.acceptCall()
+	} else if i.station.Status.Has(StatusCallConnected) || i.station.Status.Has(StatusOutgoingCall) {
+		log.Debugln("blackButtonHandler: call already outgoing or connected, doing nothing")
 	} else {
 		log.Debugln("blackButtonHandler: calling all")
 		i.callAll()
