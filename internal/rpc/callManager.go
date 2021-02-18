@@ -49,9 +49,6 @@ func (callManager *grpcCallManager) SetStation(s *station.Station) {
 }
 
 func (callManager *grpcCallManager) addCall(c *call.Call) {
-	callManager.station.Status.Set(station.StatusCallConnected)
-	callManager.station.Status.Clear(station.StatusOutgoingCall)
-	callManager.station.Status.Clear(station.StatusIncomingCall)
 	callManager.CallList[c.Id] = c
 }
 
@@ -83,11 +80,12 @@ func (callManager *grpcCallManager) duplexCall(parentContext context.Context, fr
 	defer log.Debugln("duplexCall: call.Hangup() complete")
 	defer c.Hangup()
 	defer log.Debugln("duplexCall: call.Hangup() is next, should cancel goroutines' contexts")
+	intercom := callManager.station
+	defer intercom.UpdateStatus()
 	callManager.addCall(c)
 	defer callManager.removeCall(c) // TODO remove this when c.Hangup() removes the call
 	log.Printf("Starting call with id %v:", callContext.Value(call.ContextKey("id")))
 	errCh := make(chan error)
-	intercom := callManager.station
 	var wg sync.WaitGroup
 	wg.Add(4)
 	connected := initializeConnection(callContext, stream.Send, stream.Recv, errCh)
@@ -96,6 +94,10 @@ func (callManager *grpcCallManager) duplexCall(parentContext context.Context, fr
 		log.Println(msg)
 		return errors.New(msg)
 	}
+	c.Status = call.StatusActive
+	callManager.station.Status.Set(station.StatusCallConnected)
+	callManager.station.Status.Clear(station.StatusOutgoingCall)
+	callManager.station.Status.Clear(station.StatusIncomingCall)
 	go callManager.startSending(callContext, &wg, errCh, stream.Send)
 	go callManager.startReceiving(callContext, &wg, errCh, stream.Recv)
 	go intercom.StartRecording(callContext, &wg, errCh)

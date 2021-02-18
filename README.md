@@ -56,6 +56,7 @@ The intercom station object is the primary point of contact for various componen
 
 # Changelog
 * handle second sigint with immediate hard exit
+* fix pending call blinking, stop when call accepted or rejected
 * fix mic starts recording while call in pending on dnd side
 * fix reject call while in dnd
 * fix blinking light on dnd server when client ends before server accepts or rejects

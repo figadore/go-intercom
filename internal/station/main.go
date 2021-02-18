@@ -23,6 +23,7 @@ type Station struct {
 func (station *Station) UpdateStatus() {
 	log.Println("Updating station status")
 	if !station.hasCalls() {
+		log.Println("Station has no calls")
 		station.Status.Clear(StatusCallConnected)
 		station.Status.Clear(StatusIncomingCall)
 		station.Status.Clear(StatusOutgoingCall)

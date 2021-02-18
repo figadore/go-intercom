@@ -52,7 +52,7 @@ func New(callId CallId, to string, from string, cancel func()) *Call {
 		To:     to,
 		From:   from,
 		cancel: cancel,
-		Status: StatusActive,
+		Status: StatusPending,
 	}
 	return &call
 }
