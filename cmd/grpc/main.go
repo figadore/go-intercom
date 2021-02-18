@@ -21,6 +21,7 @@ func main() {
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	// TODO look into go 1.16 signal notify context something?
+	defer signal.Stop(sigCh)
 
 	// Start a parent context that can stop child processes on global error (errCh)
 	mainContext, cancel := context.WithCancel(context.Background())
@@ -54,15 +55,21 @@ func main() {
 	//	intercom.CallManager.CallAll(mainContext)
 	//}
 	// Run forever, but clean up on error or OS signals
-	for {
-		select {
-		case sig := <-sigCh:
-			msg := fmt.Sprintf("Received system signal: %v", sig)
-			log.Println(msg)
-			panic(msg)
-		case err := <-errCh:
-			log.Printf("Closing from error: %v", err)
-			panic(err)
-		}
+	var msg string
+	select {
+	case <-mainContext.Done():
+		msg = fmt.Sprintf("Main context cancelled: %v", mainContext.Err())
+	case err := <-errCh:
+		msg = fmt.Sprintf("Closing from error: %v", err)
+	case sig := <-sigCh:
+		msg = fmt.Sprintf("Received system signal: %v", sig)
+		// In a separate goroutine, listen for a second OS signal
+		go func() {
+			<-sigCh
+			fmt.Println("Error: Received 2nd system signal, hard exit")
+			os.Exit(2)
+		}()
 	}
+	log.Println(msg)
+	panic(msg)
 }
