@@ -2,12 +2,13 @@ package rpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 
-	"github.com/rs/xid"
 	"google.golang.org/grpc"
 
 	"github.com/figadore/go-intercom/internal/log"
@@ -22,7 +23,7 @@ type grpcCallManager struct {
 	acceptCh chan bool
 }
 
-func (callManager *grpcCallManager) Hangup() {
+func (callManager *grpcCallManager) HangupAll() {
 	for _, c := range callManager.CallList {
 		c.Hangup()
 		callManager.removeCall(c)
@@ -35,7 +36,7 @@ func NewCallManager(intercom *station.Station) call.Manager {
 		station:  intercom,
 		acceptCh: make(chan bool),
 	}
-	m.CallList = make(map[xid.ID]call.Call)
+	m.CallList = make(map[call.CallId]*call.Call)
 	return m
 }
 
@@ -47,7 +48,7 @@ func (callManager *grpcCallManager) SetStation(s *station.Station) {
 	callManager.station = s
 }
 
-func (callManager *grpcCallManager) addCall(c call.Call) {
+func (callManager *grpcCallManager) addCall(c *call.Call) {
 	callManager.station.Status.Set(station.StatusCallConnected)
 	callManager.station.Status.Clear(station.StatusOutgoingCall)
 	callManager.station.Status.Clear(station.StatusIncomingCall)
@@ -60,7 +61,7 @@ func (callManager *grpcCallManager) AcceptCall() {
 func (callManager *grpcCallManager) RejectCall() {
 }
 
-func (callManager *grpcCallManager) removeCall(c call.Call) {
+func (callManager *grpcCallManager) removeCall(c *call.Call) {
 	delete(callManager.CallList, c.Id)
 	if len(callManager.CallList) == 0 {
 		_ = callManager.station.Status.Clear(station.StatusCallConnected)
@@ -72,77 +73,100 @@ type streamer interface {
 	Recv() (*pb.AudioData, error)
 }
 
-func (callManager *grpcCallManager) duplexCall(parentContext context.Context, from string, to string, stream streamer) error {
+// A cancel function is passed in here so that the grpc stream's context can be cancelled
+func (callManager *grpcCallManager) duplexCall(parentContext context.Context, from string, to string, stream streamer, cancel func()) error {
 	defer log.Println("callManager.duplexCall: Exiting, no more error receivable")
-	callId := xid.New()
-	callContext, cancel := context.WithCancel(context.WithValue(parentContext, call.ContextKey("id"), callId))
-	c := call.Call{
-		Id:     callId,
-		To:     to,
-		From:   from,
-		Cancel: cancel,
-		Status: call.StatusActive,
-	}
-	defer cancel()
-	log.Println("Starting call with id:", callContext.Value(call.ContextKey("id")))
-	receiveErrCh := make(chan error)
-	sendErrCh := make(chan error)
-	playErrCh := make(chan error)
-	recordErrCh := make(chan error)
-	intercom := callManager.station
+	callId := call.NewCallId()
+	log.Debugf("Created new callId: %v", callId)
+	callContext := context.WithValue(parentContext, call.ContextKey("id"), callId)
+	c := call.New(callId, to, from, cancel)
+	defer log.Debugln("duplexCall: call.Hangup() complete")
+	defer c.Hangup()
+	defer log.Debugln("duplexCall: call.Hangup() is next, should cancel goroutines' contexts")
 	callManager.addCall(c)
-	defer callManager.removeCall(c)
-	go callManager.startReceiving(callContext, receiveErrCh, stream.Recv)
-	go intercom.StartPlayback(playErrCh)
-	go intercom.StartRecording(callContext, recordErrCh)
-	go callManager.startSending(callContext, sendErrCh, stream.Send)
+	defer callManager.removeCall(c) // TODO remove this when c.Hangup() removes the call
+	log.Printf("Starting call with id %v:", callContext.Value(call.ContextKey("id")))
+	errCh := make(chan error)
+	intercom := callManager.station
+	var wg sync.WaitGroup
+	wg.Add(4)
+	connected := initializeConnection(callContext, stream.Send, stream.Recv, errCh)
+	if !connected {
+		msg := "Call did not initialize"
+		log.Println(msg)
+		return errors.New(msg)
+	}
+	go callManager.startSending(callContext, &wg, errCh, stream.Send)
+	go callManager.startReceiving(callContext, &wg, errCh, stream.Recv)
+	go intercom.StartRecording(callContext, &wg, errCh)
+	go intercom.StartPlayback(callContext, &wg, errCh)
 	log.Debugln("DuplexCall: go routines started")
 	select {
 	case <-callContext.Done():
-		log.Printf("callManager.duplexCall: context.Done: %v", callContext.Err())
+		log.Printf("duplexCall: context.Done: %v", callContext.Err())
+		cancel()
+		wg.Wait()
 		return callContext.Err()
-	case err := <-sendErrCh:
-		log.Printf("callManager.duplexCall: sendErrCh: %v", err)
+	case err := <-errCh:
+		log.Printf("duplexCall: Received error on errCh: %v", err)
+		cancel()
+		log.Printf("duplexCall: waiting on waitgroup")
+		wg.Wait()
+		log.Printf("duplexCall: finished waiting on waitgroup")
 		return err
-	case err := <-receiveErrCh:
-		log.Printf("callManager.duplexCall: receiveErrCh: %v", err)
-		return err
-	case err := <-playErrCh:
-		log.Printf("callManager.duplexCall: playErrCh: %v", err)
-		return err
-	case err := <-recordErrCh:
-		log.Printf("callManager.duplexCall: recordErrCh: %v", err)
-		return err
-	case <-parentContext.Done():
-		log.Printf("callManager.duplexCall: parentContext.Done: %v. didn't know this was possible. chosen at random?", parentContext.Err())
-		<-callContext.Done()
-		log.Printf("callManager.duplexCall: ok, context.Done too: %v", callContext.Err())
-		return parentContext.Err()
 	}
+}
+
+// Send and receive the first packets of data. These will be empty slices
+func initializeConnection(ctx context.Context, sendFn func(*pb.AudioData) error, recvFn func() (*pb.AudioData, error), errCh chan error) bool {
+	// Initial send
+	data := pb.AudioData{
+		Data: make([]float32, 0),
+	}
+	err := sendFn(&data)
+	if err != nil {
+		log.Println("startSending.initialSend: error grpc sending", err)
+		sendWithTimeout(err, errCh)
+		log.Println("startSending.initialSend: sent error grpc sending", err)
+		return false
+	}
+	log.Println("startSending.initialSend: sent first packet", err)
+
+	// Initial receive
+	_, err = recvFn()
+	if err == io.EOF {
+		log.Println("startReceiving.initialReceive: received io.EOF")
+		return false
+	} else if err != nil {
+		log.Println("startReceiving.initialReceive: error receiving", err)
+		select {
+		case <-ctx.Done():
+			log.Println("startReceiving.initialReceive: context done4")
+		case errCh <- err:
+			log.Println("startReceiving.initialReceive: sent error receiving", err)
+		case <-time.After(5 * time.Second):
+			log.Println("WARN: startReceiving.initialReceive: timeout sending error", err)
+		}
+		return false
+	}
+	log.Println("startReceiving.initialReceive: received first packet")
+	return true
 }
 
 // CallAll calls every intercom station it knows about
 // ctx is station context/main context from cmd
-func (callManager *grpcCallManager) CallAll(mainContext context.Context) {
+func (callManager *grpcCallManager) CallAll() {
 	log.Debugln("Debug: callManager.CallAll: enter")
 	defer log.Debugln("Debug: callManager.CallAll: exit")
 	intercoms := os.Args[1:]
 	for _, address := range intercoms {
-		go callManager.outgoingCall(mainContext, address)
+		go callManager.outgoingCall(address)
 		// callManager.outgoingCall(mainContext, address)
 	}
 }
 
-func (callManager *grpcCallManager) outgoingCall(mainContext context.Context, address string) {
+func (callManager *grpcCallManager) outgoingCall(address string) {
 	log.Println("outgoingCall: Start client side DuplexCall")
-	select {
-	case <-mainContext.Done():
-		msg := fmt.Sprintf("outgoingCall: Error: parent context cancelled: %v", mainContext.Err())
-		log.Println(msg)
-		return
-	default:
-		break
-	}
 
 	// Initiate a grpc connection with the server
 	fullAddress := fmt.Sprintf("192.168.0.%s%s", address, port)
@@ -150,7 +174,7 @@ func (callManager *grpcCallManager) outgoingCall(mainContext context.Context, ad
 	from := "self"
 	log.Println("outgoingCall: dialing", fullAddress)
 	_ = callManager.station.Status.Set(station.StatusOutgoingCall)
-	// TODO send separate "call request" grpc call to ring other end and wait if auto-answer not enabled
+	// TODO send separate "call request" grpc call to ring other end and wait if auto-answer not enabled? or set status once first successful send/receive happens?
 	conn, err := grpc.Dial(fullAddress, grpc.WithInsecure(), grpc.WithBlock())
 	if err != nil {
 		msg := fmt.Sprintf("Warning: Unable to dial %v: %v", fullAddress, err)
@@ -162,7 +186,9 @@ func (callManager *grpcCallManager) outgoingCall(mainContext context.Context, ad
 	defer conn.Close()
 	defer log.Debugln("outgoingCall: conn.Closing")
 	client := pb.NewIntercomClient(conn)
-	serverStream, err := client.DuplexCall(callManager.station.Context)
+	grpcCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serverStream, err := client.DuplexCall(grpcCtx)
 	if err != nil {
 		log.Printf("outgoingCall: error creating duplex call client: %v", err)
 		return
@@ -173,14 +199,23 @@ func (callManager *grpcCallManager) outgoingCall(mainContext context.Context, ad
 		_ = serverStream.CloseSend()
 		log.Println("outgoingCall: CloseSend() complete")
 	}()
-	err = callManager.duplexCall(mainContext, to, from, serverStream)
+	err = callManager.duplexCall(grpcCtx, to, from, serverStream, cancel)
 	log.Println("outgoingCall: client-side duplex call ended with:", err)
 }
 
+func sendWithTimeout(err error, errCh chan error) {
+	select {
+	case errCh <- err:
+	case <-time.After(5 * time.Second):
+		log.Println("WARN: timeout sending error", err)
+	}
+}
+
 // Infinite loop to receive from the gRPC stream and send it to the speaker
-func (callManager *grpcCallManager) startReceiving(ctx context.Context, errCh chan error, recvFn func() (*pb.AudioData, error)) {
+func (callManager *grpcCallManager) startReceiving(ctx context.Context, wg *sync.WaitGroup, errCh chan error, recvFn func() (*pb.AudioData, error)) {
 	log.Println("startReceiving: enter")
 	defer log.Println("startReceiving: exit")
+	defer wg.Done()
 	intercom := callManager.station
 	// log.SetPrefix("startReceiving: ")
 	// log.SetFlags(log.Ldate | log.Lmicroseconds)
@@ -190,12 +225,6 @@ func (callManager *grpcCallManager) startReceiving(ctx context.Context, errCh ch
 			log.Println("startReceiving: context done")
 			if err := ctx.Err(); err != nil {
 				log.Println("startReceiving: context error", ctx.Err())
-				select {
-				case errCh <- err:
-					log.Println("startReceiving: sent context error", ctx.Err())
-				case <-time.After(5 * time.Second):
-					log.Println("WARN: startReceiving: timeout sending context error", ctx.Err())
-				}
 			}
 			return
 		default:
@@ -208,16 +237,23 @@ func (callManager *grpcCallManager) startReceiving(ctx context.Context, errCh ch
 		} else if err != nil {
 			log.Println("startReceiving: error receiving", err)
 			select {
+			case <-ctx.Done():
+				log.Println("startReceiving: context done2")
 			case errCh <- err:
-				log.Println("startReceiving: sent recv error", err)
+				log.Println("startReceiving: sent error receiving", err)
 			case <-time.After(5 * time.Second):
-				log.Println("WARN: startReceiving: timeout sending recv error", err)
+				log.Println("WARN: startReceiving: timeout sending error", err)
 			}
 			return
 		}
 		data := make([]float32, len(in.Data))
 		copy(data, in.Data)
-		intercom.SendSpeakerAudio(data)
+		select {
+		case <-ctx.Done():
+			log.Println("startReceiving: context done3: ", ctx.Err())
+			return
+		case intercom.SpeakerAudioCh() <- data:
+		}
 	}
 }
 
@@ -231,9 +267,10 @@ func (callManager *grpcCallManager) startReceiving(ctx context.Context, errCh ch
 //}
 
 // Infinite loop to receive from the mic and stream it to the gRPC server
-func (callManager *grpcCallManager) startSending(ctx context.Context, errCh chan error, sendFn func(*pb.AudioData) error) {
+func (callManager *grpcCallManager) startSending(ctx context.Context, wg *sync.WaitGroup, errCh chan error, sendFn func(*pb.AudioData) error) {
 	log.Println("startSending: enter")
 	defer log.Println("startSending: exit")
+	defer wg.Done()
 	intercom := callManager.station
 	// when streaming ends, client receives io.EOF
 	// not sure how to initiate this on the server side though
@@ -241,55 +278,25 @@ func (callManager *grpcCallManager) startSending(ctx context.Context, errCh chan
 	var data pb.AudioData
 	for {
 		select {
-		case <-ctx.Done():
-			// log.Println("startSending: context done")
-			if err := ctx.Err(); err != nil {
-				// TODO find out how to close connection from here... send nil?
-				log.Println("startSending: context done", err)
-				select {
-				case errCh <- err:
-					log.Println("startSending: sent recv error", err)
-				case <-time.After(5 * time.Second):
-					log.Println("WARN: startSending: timeout sending context error", err)
-				}
+		case audioBytes = <-intercom.MicAudioCh():
+			data = pb.AudioData{
+				Data: audioBytes,
 			}
+		case <-time.After(5 * time.Second):
+			log.Println("WARN: timeout receiving from mic audio channel")
 			return
-		default:
-			break
-		}
-		// blocking
-		// TODO move this to the channel select?
-		audioBytes = intercom.ReceiveMicAudio()
-		data = pb.AudioData{
-			Data: audioBytes,
-		}
-		select {
 		case <-ctx.Done():
 			log.Println("startSending: context done")
-			if err := ctx.Err(); err != nil {
-				// TODO find out how to close connection from here... send nil?
-				log.Println("startSending: context done2:", err)
-				errCh <- err
-				select {
-				case errCh <- err:
-					log.Println("startSending: sent context error2", ctx.Err())
-				case <-time.After(5 * time.Second):
-					log.Println("WARN: startSending: timeout sending context error2", ctx.Err())
-				}
-			}
+			_ = sendFn(nil)
 			return
-		default:
-			break
+			// default:
+			//	break
 		}
 		err := sendFn(&data)
 		if err != nil {
 			log.Println("startSending: error grpc sending", err)
-			select {
-			case errCh <- err:
-				log.Println("startSending: sent grpc send error:", err)
-			case <-time.After(5 * time.Second):
-				log.Println("WARN: startSending: timeout sending grpc send error:", err)
-			}
+			sendWithTimeout(err, errCh)
+			log.Println("startSending: sent error grpc sending", err)
 			return
 		}
 	}

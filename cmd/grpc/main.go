@@ -20,6 +20,7 @@ func main() {
 	// Handle externally generated OS exit signals
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	// TODO look into go 1.16 signal notify context something?
 
 	// Start a parent context that can stop child processes on global error (errCh)
 	mainContext, cancel := context.WithCancel(context.Background())

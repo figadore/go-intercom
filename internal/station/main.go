@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"time"
+	"sync"
 
 	"github.com/figadore/go-intercom/pkg/call"
 	"github.com/warthog618/gpiod"
@@ -12,12 +12,12 @@ import (
 
 type Station struct {
 	CallManager call.Manager
-	Context     context.Context
-	Inputs      Inputs
-	Outputs     Outputs
-	Speaker     *Speaker
-	Microphone  *Microphone
-	Status      *Status
+	// Context     context.Context
+	Inputs     Inputs
+	Outputs    Outputs
+	Speaker    *Speaker
+	Microphone *Microphone
+	Status     *Status
 }
 
 func (station *Station) UpdateStatus() {
@@ -36,14 +36,13 @@ func New(ctx context.Context, dotEnv map[string]string, callManagerFactory func(
 	outputs := getOutputs(dotEnv)
 	speaker := Speaker{
 		AudioCh: make(chan []float32),
-		Context: ctx,
+		done:    make(chan struct{}),
 	}
 	mic := Microphone{
 		AudioCh: make(chan []float32),
-		Context: ctx,
+		done:    make(chan struct{}),
 	}
 	station := Station{
-		Context:    ctx,
 		Speaker:    &speaker,
 		Microphone: &mic,
 		Outputs:    outputs,
@@ -70,12 +69,12 @@ func (s *Station) RejectCall() {
 	s.CallManager.AcceptCh() <- false
 }
 
-func (s *Station) callAll(mainContext context.Context) {
-	s.CallManager.CallAll(mainContext)
+func (s *Station) callAll() {
+	s.CallManager.CallAll()
 }
 
-func (s *Station) hangup() {
-	s.CallManager.Hangup()
+func (s *Station) hangupAll() {
+	s.CallManager.HangupAll()
 }
 
 func getOutputs(dotEnv map[string]string) Outputs {
@@ -99,35 +98,26 @@ func getInputs(ctx context.Context, dotEnv map[string]string, station *Station) 
 }
 
 // StartPlayback begins the station's speaker playback
-func (s *Station) StartPlayback(errCh chan error) {
-	s.Speaker.StartPlayback(errCh)
+func (s *Station) StartPlayback(ctx context.Context, wg *sync.WaitGroup, errCh chan error) {
+	// TODO create a new speaker here, or maybe just a new audio stream
+	s.Speaker.done = make(chan struct{})
+	s.Speaker.StartPlayback(ctx, wg, errCh)
 }
 
 // StartRecording begins the station's mic recording/listening
-func (s *Station) StartRecording(ctx context.Context, errCh chan error) {
-	s.Microphone.StartRecording(ctx, errCh)
+func (s *Station) StartRecording(ctx context.Context, wg *sync.WaitGroup, errCh chan error) {
+	s.Microphone.done = make(chan struct{})
+	s.Microphone.StartRecording(ctx, wg, errCh)
 }
 
-// SendSpeakerAudio takes data and sends it to the speaker audio channel (blocking)
-func (s *Station) SendSpeakerAudio(data []float32) {
-	select {
-	case s.Speaker.AudioCh <- data:
-	case <-time.After(5 * time.Second):
-		log.Println("WARN: SendSpeakerAudio: timeout sending data to speaker.AudioCh")
-
-	}
+// SpeakerAudioCh returns the channel for sending speaker audio data
+func (s *Station) SpeakerAudioCh() chan []float32 {
+	return s.Speaker.AudioCh
 }
 
-// ReceiveMicAudio returns data from the mic audio (blocking)
-func (s *Station) ReceiveMicAudio() []float32 {
-	select {
-	case data := <-s.Microphone.AudioCh:
-		return data
-	case <-time.After(5 * time.Second):
-		log.Println("WARN: ReceiveMicAudio: timeout receiving data from mic.AudioCh")
-		return make([]float32, 0)
-
-	}
+// MicAudioCh returns the channel for receiving mic audio data
+func (s *Station) MicAudioCh() chan []float32 {
+	return s.Microphone.AudioCh
 }
 
 // Release resources for this device. Only do this on full shut down

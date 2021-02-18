@@ -36,15 +36,21 @@ func newLed(line *gpiod.Line) *led {
 }
 
 func (l *led) blink(interval time.Duration) {
+	if l.blinking {
+		close(l.done)
+		l.done = make(chan bool)
+	}
 	l.ticker.Reset(interval)
+	l.blinking = true
+	// copy led's done channel so we always have access to the value from this point in time
+	doneCopy := l.done
 	go func() {
 		v := 0
-		l.blinking = true
-		log.Println("LED blink: waiting for done or ticker")
 		for {
 			select {
-			case <-l.done:
+			case <-doneCopy:
 				l.blinking = false
+				l.ticker.Stop()
 				return
 			case <-l.ticker.C:
 				v = 1 - v
@@ -58,12 +64,18 @@ func (l *led) blink(interval time.Duration) {
 	}()
 }
 
-func (l *led) on() {
+func (l *led) stopBlink() {
 	if l.blinking {
-		l.ticker.Stop()
-		l.done <- true
 		l.blinking = false
+		// Close done channel in use by any goroutines
+		close(l.done)
+		// Create a new done channel
+		l.done = make(chan bool)
 	}
+}
+
+func (l *led) on() {
+	l.stopBlink()
 	err := l.line.SetValue(1)
 	if err != nil {
 		log.Println("Error turning on LED:", err)
@@ -71,11 +83,7 @@ func (l *led) on() {
 }
 
 func (l *led) off() {
-	if l.blinking {
-		l.ticker.Stop()
-		l.done <- true
-		l.blinking = false
-	}
+	l.stopBlink()
 	err := l.line.SetValue(0)
 	if err != nil {
 		log.Println("Error turning off LED:", err)

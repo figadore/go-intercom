@@ -19,7 +19,7 @@ func (s *Status) Has(flag status) bool {
 }
 
 func (s *Status) Set(flag status) status {
-	log.Debugln("Setting status: ", flag)
+	log.Println("Setting status: ", flag)
 	s.Lock()
 	s.status = s.status | flag
 	s.Unlock()
@@ -28,7 +28,7 @@ func (s *Status) Set(flag status) status {
 }
 
 func (s *Status) Clear(flag status) status {
-	log.Debugln("Clearing status: ", flag)
+	log.Println("Clearing status: ", flag)
 	s.Lock()
 	s.status = s.status &^ flag
 	s.Unlock()
@@ -37,7 +37,7 @@ func (s *Status) Clear(flag status) status {
 }
 
 func (s *Status) Toggle(flag status) status {
-	log.Debugln("Toggling status: ", flag)
+	log.Println("Toggling status: ", flag)
 	s.Lock()
 	s.status = s.status ^ flag
 	s.Unlock()
