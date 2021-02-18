@@ -32,6 +32,13 @@ The cmd/grpc package creates the top-level [Station] object with a context that 
 ### Station
 The intercom station object is the primary point of contact for various components.
 
+#### LED Outputs
+* Green LED: call connected
+* Yellow LED: auto-answer off (aka do-not-disturb)
+* Flashing Yellow LED: outgoing call pending, other side has no auto-answer or is not online
+* Flashing Green LED: incoming call. Accept or reject, or 20 second to auto-reject
+* Green and Yellow at the same time: Error
+
 ### Calls
 [Call]s are managed by the [CallManager]. Whether a call is incoming or outoing, the same duplexCall function is used (though this might change when multi-way calling is added). Each call object has it's own context and cancel method, so that it can be cancelled from the inputs through the call manager
 
