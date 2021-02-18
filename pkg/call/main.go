@@ -29,6 +29,10 @@ type ContextKey string
 
 type CallId xid.ID
 
+func (id CallId) String() string {
+	return xid.ID(id).String()
+}
+
 func NewCallId() CallId {
 	return CallId(xid.New())
 }
