@@ -14,7 +14,7 @@ import (
 	"github.com/figadore/go-intercom/internal/station"
 )
 
-func main() {
+func run(args []string) int {
 	// Enable global debug logs
 	log.EnableDebug()
 	// Handle externally generated OS exit signals
@@ -56,13 +56,17 @@ func main() {
 	//}
 	// Run forever, but clean up on error or OS signals
 	var msg string
+	var exitCode int
 	select {
 	case <-mainContext.Done():
 		msg = fmt.Sprintf("Main context cancelled: %v", mainContext.Err())
+		exitCode = 0
 	case err := <-errCh:
 		msg = fmt.Sprintf("Closing from error: %v", err)
+		exitCode = 1
 	case sig := <-sigCh:
 		msg = fmt.Sprintf("Received system signal: %v", sig)
+		exitCode = 2
 		// In a separate goroutine, listen for a second OS signal
 		go func() {
 			<-sigCh
@@ -71,5 +75,9 @@ func main() {
 		}()
 	}
 	log.Println(msg)
-	panic(msg)
+	return exitCode
+}
+
+func main() {
+	os.Exit(run(os.Args))
 }
