@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+option go_package = "github.com/figadore/go-intercom/internal/webrtc/pb";
+option java_multiple_files = true;
+option java_package = "com.github.figadore.go_intercom.webrtc";
+option java_outer_classname = "GoIntercomProto";
+
+package pb;
+
+// The intercom receiver service definition.
+service WebRtc {
+  rpc AddIceCandidate (IceCandidate) returns (IceCandidateResponse) {}
+  rpc SdpSignal (SdpOffer) returns (SdpAnswer) {}
+}
+
+message IceCandidate {
+  string json_candidate = 1;
+}
+
+message IceCandidateResponse {
+}
+
+message SdpOffer {
+  string offer = 1;
+}
+
+message SdpAnswer {
+  string answer = 1;
+}
+

@@ -51,7 +51,7 @@ func run(args []string) int {
 	defer log.Debugln("Cancelled main context")
 	defer cancel()
 	defer log.Debugln("Cancelling main context")
-	//if len(os.Args) > 1 {
+	//if len(args) > 1 {
 	//	intercom.CallManager.CallAll(mainContext)
 	//}
 	// Run forever, but clean up on error or OS signals
