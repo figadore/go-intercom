@@ -18,21 +18,24 @@ const (
 	port = ":20000"
 )
 
-func NewServer(host string) (*grpc.Server, *webrtc.PeerConnection) {
+func NewServer(host string) (*grpc.Server, *Server) {
 	s := grpc.NewServer()
 	addr := fmt.Sprintf("192.168.0.%v%v", host, port)
-	peerConnection, pendingCandidates := GetPeerConnection(addr)
-	pb.RegisterWebRtcServer(s, &Server{
+	peerConnection, pendingCandidates := getPeerConnection(addr)
+	server := &Server{
 		pendingIceCandidates: pendingCandidates,
+		peerAddr:             addr,
 		peerConnection:       peerConnection,
-	})
-	return s, peerConnection
+	}
+	pb.RegisterWebRtcServer(s, server)
+	return s, server
 }
 
 type Server struct {
 	pb.UnimplementedWebRtcServer
+	peerAddr             string
 	peerConnection       *webrtc.PeerConnection
-	pendingIceCandidates []*webrtc.ICECandidate
+	pendingIceCandidates *[]*webrtc.ICECandidate
 }
 
 func Serve(s *grpc.Server, errCh chan error) {
@@ -72,8 +75,10 @@ func (s *Server) AddIceCandidate(ctx context.Context, candidate *pb.IceCandidate
 }
 
 func (s *Server) SdpSignal(ctx context.Context, offer *pb.SdpOffer) (*pb.SdpAnswer, error) {
+	// TODO handle pendingIceCandidates here
 	log.Println("Received SDP Offer:", offer)
 
+	// Set remote description based on incoming SDP
 	sdp := webrtc.SessionDescription{}
 	log.Println("Empty SDP", &sdp)
 	if err := json.NewDecoder(strings.NewReader(offer.Offer)).Decode(&sdp); err != nil {
@@ -87,6 +92,8 @@ func (s *Server) SdpSignal(ctx context.Context, offer *pb.SdpOffer) (*pb.SdpAnsw
 		panic(err)
 	}
 
+	// Data channel will be created by other end
+	// Add data channel handlers
 	peerConnection.OnDataChannel(func(d *webrtc.DataChannel) {
 		log.Printf("New DataChannel %s %d\n", d.Label(), d.ID())
 
@@ -97,27 +104,40 @@ func (s *Server) SdpSignal(ctx context.Context, offer *pb.SdpOffer) (*pb.SdpAnsw
 		d.OnMessage(onDataChannelMessage(d))
 	})
 
-	// Create an answer to send to the other process
-	answer, err := peerConnection.CreateAnswer(nil)
-	log.Println("created empty answer:", answer)
+	// Create an answer (SDP) to send to the other end
+	pranswer, err := peerConnection.CreateAnswer(nil)
+	log.Println("created provisional answer:", pranswer)
 	if err != nil {
 		panic(err)
 	}
 
-	// Sets the LocalDescription, and starts our UDP listeners
-	err = peerConnection.SetLocalDescription(answer)
-	log.Println("local description set:", answer)
+	// Set local description *after* responding with pranswer
+	defer func() {
+		// Sets the LocalDescription, and starts our UDP listeners
+		// Ensure this happens AFTER SetRemoteDescription because AddICECandidate
+		// will break if remote description is not set
+		// Also, ensure this happens AFTER SetRemoteDescription on the remote
+		// because signaling an ICE candidate will try to AddICECandidate
+		err = peerConnection.SetLocalDescription(pranswer)
+		log.Println("local description set to provisional answer")
+		if err != nil {
+			panic(err)
+		}
+
+		log.Printf("SdpSignal: %v pendingIceCandidates", len(*s.pendingIceCandidates))
+		for _, c := range *s.pendingIceCandidates {
+			if onICECandidateErr := signalCandidate(s.peerAddr, c); onICECandidateErr != nil {
+				panic(onICECandidateErr)
+			}
+		}
+	}()
+	// Send our answer to the gRPC server on the other end
+	payload, err := json.Marshal(pranswer)
 	if err != nil {
 		panic(err)
 	}
 
-	// Send our answer to the HTTP server listening in the other process
-	payload, err := json.Marshal(answer)
-	if err != nil {
-		panic(err)
-	}
-
-	log.Println("responding with answer:", string(payload))
+	log.Println("responding with provisional answer:", string(payload))
 	a := pb.SdpAnswer{Answer: string(payload)}
 	return &a, nil
 }

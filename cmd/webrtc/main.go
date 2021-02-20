@@ -24,11 +24,13 @@ func run(args []string) int {
 
 	errCh := make(chan error)
 	addr := args[1]
-	grpcServer, peerConnection := webrtc.NewServer(addr)
+	grpcServer, server := webrtc.NewServer(addr)
 	// Start serving on AddIceCandidate and SdpSignal endpoints
 	go webrtc.Serve(grpcServer, errCh)
+	// When running purely from cli, if 2 args were added to the call to the
+	// binary, immediately initiate a call from that device
 	if len(args) > 2 {
-		webrtc.Call(addr, peerConnection)
+		webrtc.Call(addr, server)
 	}
 
 	var msg string

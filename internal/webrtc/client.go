@@ -16,6 +16,7 @@ import (
 	"github.com/figadore/go-intercom/internal/webrtc/pb"
 )
 
+// signalSdp uses gRPC to send an ICE candidate to the peer
 func signalCandidate(addr string, c *webrtc.ICECandidate) error {
 	log.Println("Dialing grpc server", addr)
 	var opts []grpc.DialOption
@@ -32,15 +33,37 @@ func signalCandidate(addr string, c *webrtc.ICECandidate) error {
 
 	payload := c.ToJSON().Candidate
 	log.Println("Signaling candidate")
-	result, err := client.AddIceCandidate(ctx, &pb.IceCandidate{JsonCandidate: payload})
+	_, err = client.AddIceCandidate(ctx, &pb.IceCandidate{JsonCandidate: payload})
 	if err != nil {
 		return err
 	}
-	log.Println("Result: ", result)
+	// log.Println("Result: ", result)
 	return nil
 }
 
-func GetPeerConnection(addr string) (*webrtc.PeerConnection, []*webrtc.ICECandidate) {
+// signalSdp uses gRPC to send the SDP to the peer
+func signalSdp(addr string, offer *pb.SdpOffer) *pb.SdpAnswer {
+	ctx := context.Background()
+	var opts []grpc.DialOption
+	opts = append(opts, grpc.WithInsecure())
+	opts = append(opts, grpc.WithBlock())
+	conn, err := grpc.Dial(addr, opts...)
+	if err != nil {
+		log.Printf("fail to dial: %v", err)
+		panic(err)
+	}
+	defer conn.Close()
+	client := pb.NewWebRtcClient(conn)
+	answer, err := client.SdpSignal(ctx, offer)
+	if err != nil {
+		panic(err)
+	}
+	log.Println("Answer: ", answer)
+	return answer
+}
+
+// Create a basic peer connection with event handlers for new ICE candidates
+func getPeerConnection(addr string) (*webrtc.PeerConnection, *[]*webrtc.ICECandidate) {
 	// Prepare the configuration
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
@@ -60,6 +83,9 @@ func GetPeerConnection(addr string) (*webrtc.PeerConnection, []*webrtc.ICECandid
 	pendingCandidates := make([]*webrtc.ICECandidate, 0)
 	// When an ice candidate is discovered, let the other end know to update its remote description
 	// which means remote description has to be set first
+	// This function is triggered after peerConnection.SetLocalDescription()
+	// but it cannot run before the other end's remote description has been set
+	// It can run before this end's remote description through the use of pendingCandidates
 	peerConnection.OnICECandidate(func(c *webrtc.ICECandidate) {
 		log.Println("ICE candidate found")
 		if c == nil {
@@ -92,63 +118,11 @@ func GetPeerConnection(addr string) (*webrtc.PeerConnection, []*webrtc.ICECandid
 		log.Printf("ICE Connection State has changed: %s\n", connectionState.String())
 	})
 
-	return peerConnection, pendingCandidates
+	return peerConnection, &pendingCandidates
 }
 
-//func InitiateSdpSignaling(serverAddr string) string {
-//	peerConnection, pendingCandidates := GetPeerConnection(serverAddr)
-//	log.Println(pendingCandidates)
-//
-//	// Create an offer to send to the other process
-//	log.Println("Creating sdp offer")
-//	offer, err := peerConnection.CreateOffer(nil)
-//	if err != nil {
-//		panic(err)
-//	}
-//
-//	// Sets the LocalDescription, and starts our UDP listeners
-//	// Note: this will start the gathering of ICE candidates
-//	log.Println("Setting local description")
-//	if err = peerConnection.SetLocalDescription(offer); err != nil {
-//		panic(err)
-//	}
-//	// When an ICE candidate is available send to the other Pion instance
-//	// the other Pion instance will add this candidate by calling AddICECandidate
-//
-//	// Send our offer to the HTTP server listening in the other process
-//	payload, err := json.Marshal(offer)
-//	if err != nil {
-//		panic(err)
-//	}
-//	sdpOffer := &pb.SdpOffer{Offer: string(payload)}
-//	log.Println("Sending offer", sdpOffer)
-//	answer := offerSdp(serverAddr, sdpOffer)
-//	log.Println("Got answer", answer)
-//	// Block forever
-//	select {}
-//	return answer
-//}
-
-//func offerSdp(addr string, offer *pb.SdpOffer) string {
-//	ctx := context.Background()
-//	var opts []grpc.DialOption
-//	opts = append(opts, grpc.WithInsecure())
-//	opts = append(opts, grpc.WithBlock())
-//	conn, err := grpc.Dial(addr, opts...)
-//	if err != nil {
-//		log.Fatalf("fail to dial: %v", err)
-//	}
-//	defer conn.Close()
-//	client := pb.NewWebRtcClient(conn)
-//	answer, err := client.SdpSignal(ctx, offer)
-//	if err != nil {
-//		panic(err)
-//	}
-//	log.Println("Answer: ", answer)
-//	return answer.Answer
-//}
-
-func Call(host string, peerConnection *webrtc.PeerConnection) *webrtc.DataChannel {
+func Call(host string, s *Server) *webrtc.DataChannel {
+	peerConnection := s.peerConnection
 	// We're the client, we initiate by sending an sdp offer to the server
 	// Hopefully the server will have its own ice candidates by now?
 	// The server responds to the client's offer with an answer, which may initially contain no ice candidates
@@ -161,7 +135,7 @@ func Call(host string, peerConnection *webrtc.PeerConnection) *webrtc.DataChanne
 	// go webrtc.InitiateSdpSignaling(addr)
 	// Create an offer to send to the other process
 	log.Println("Creating sdp offer")
-	// peerConnection, pendingCandidates := webrtc.GetPeerConnection(addr)
+	// peerConnection, pendingCandidates := webrtc.getPeerConnection(addr)
 	// log.Println(pendingCandidates)
 
 	// log.Println(sdp)
@@ -185,40 +159,29 @@ func Call(host string, peerConnection *webrtc.PeerConnection) *webrtc.DataChanne
 		panic(err)
 	}
 	sdpOffer := &pb.SdpOffer{Offer: string(payload)}
-	log.Println("Signalling offer via gRPC:", offer)
-	answer := offerSdp(addr, sdpOffer)
-	sdp := webrtc.SessionDescription{}
-	err = json.NewDecoder(strings.NewReader(answer.Answer)).Decode(&sdp)
-	log.Println("Decoded SDP", &sdp)
+	log.Println("Signaling offer via gRPC:", offer)
+	pranswer := signalSdp(addr, sdpOffer)
+
+	remoteSdp := webrtc.SessionDescription{}
+	err = json.NewDecoder(strings.NewReader(pranswer.Answer)).Decode(&remoteSdp)
+	log.Println("Decoded SDP", &remoteSdp)
 	if err != nil {
 		panic(err)
 	}
-	err = peerConnection.SetRemoteDescription(sdp)
-	log.Println("Set remote description")
+	err = peerConnection.SetRemoteDescription(remoteSdp)
+	log.Println("Set remote description with provisional answer")
 	if err != nil {
 		panic(err)
+	}
+
+	// now that the remote description has been set, we can signal any pending ice candidates
+	log.Printf("Call: %v pendingIceCandidates", len(*s.pendingIceCandidates))
+	for _, c := range *s.pendingIceCandidates {
+		if onICECandidateErr := signalCandidate(s.peerAddr, c); onICECandidateErr != nil {
+			panic(onICECandidateErr)
+		}
 	}
 	return dc
-}
-
-func offerSdp(addr string, offer *pb.SdpOffer) *pb.SdpAnswer {
-	ctx := context.Background()
-	var opts []grpc.DialOption
-	opts = append(opts, grpc.WithInsecure())
-	opts = append(opts, grpc.WithBlock())
-	conn, err := grpc.Dial(addr, opts...)
-	if err != nil {
-		log.Printf("fail to dial: %v", err)
-		panic(err)
-	}
-	defer conn.Close()
-	client := pb.NewWebRtcClient(conn)
-	answer, err := client.SdpSignal(ctx, offer)
-	if err != nil {
-		panic(err)
-	}
-	log.Println("Answer: ", answer)
-	return answer
 }
 
 func getDataChannel(peerConnection *webrtc.PeerConnection) *webrtc.DataChannel {
