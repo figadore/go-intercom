@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"time"
 
 	"github.com/pion/webrtc/v3"
 	"google.golang.org/grpc"
@@ -92,25 +91,10 @@ func (s *Server) SdpSignal(ctx context.Context, offer *pb.SdpOffer) (*pb.SdpAnsw
 		log.Printf("New DataChannel %s %d\n", d.Label(), d.ID())
 
 		// Register channel opening handling
-		d.OnOpen(func() {
-			log.Printf("Data channel '%s'-'%d' open. Random messages will now be sent to any connected DataChannels every 5 seconds\n", d.Label(), d.ID())
-
-			for range time.NewTicker(5 * time.Second).C {
-				message := time.Now().String()
-				log.Printf("Sending '%s'\n", message)
-
-				// Send the message as text
-				sendTextErr := d.SendText(message)
-				if sendTextErr != nil {
-					panic(sendTextErr)
-				}
-			}
-		})
+		d.OnOpen(onDataChannelOpen(d))
 
 		// Register text message handling
-		d.OnMessage(func(msg webrtc.DataChannelMessage) {
-			log.Printf("Message from DataChannel '%s': '%s'\n", d.Label(), string(msg.Data))
-		})
+		d.OnMessage(onDataChannelMessage(d))
 	})
 
 	// Create an answer to send to the other process
