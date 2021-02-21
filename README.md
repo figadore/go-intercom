@@ -29,6 +29,93 @@ The Inputs should not talk directly to the CallManager, they should talk to the 
 ### gRPC
 The cmd/grpc package creates the top-level [Station] object with a context that is cancelled on error (errCh) or OS signal. A gRPC server is created, and input handlers are set up to create new gRPC clients when activated. The gRPC server listens in a go routine, and waits for context cancel or error.
 
+### WebRTC
+The cmd/webrtc package does stuff
+The initial connectivity is accomplished using gRPC to signal peers about the SDP and ICE candidates. Using pion, the order is important.
+
+On both the client and the server, when an ICE candidate is found, the OnICECandidate callback runs, which calls the AddIceCandidate gRPC call. In order for the other side to add the ICE candidate, the client's and server's remote description need to be set on the peerConnection. The client side delays the need to have the remote description set by collecting a slice of `pendingIceCandidates`, which is iterated after it receives the pranswer
+
+1. The "client" or initiator creates a minimal "offer" SDP
+1. The client sets the local description to the offer (This kicks off the ICE detection process on the client. ICE candidates discovered during this period are added to the `pendingIceCandidates` slice)
+1. The client sends the offer to the "server" using gRPC
+1. The server sets the remote description to the offer
+1. The server creates a provisional answer (pranswer)
+1. The client receives the (pranswer) as a response to the gRPC call
+1. The client sets the remote description to the pranswer
+1. The server sets the local description to the pranswer (This kicks off the ICE detection process on the server)
+1. The client iterates the `pendingIceCandidates` and sends them to the server via the SdpSignal gRPC call. The server alls AddIceCandidate on the peerConnection. Any future discovered ICE candidates follow this same process
+1. Any ICE candidates discovered on the server side send them to the client via the same SdpSignal gRPC call.
+1. A connection is established
+1. The client creates the data channel
+
+```
+     +----+                                                        +------+                            +------+                        
+     ¦stun¦                                                        ¦client¦                            ¦server¦                        
+     +----+                                                        +------+                            +------+                        
+       ¦ setLocalDescription(offer), kicks off ice candidate discovery¦                                   ¦                            
+       ¦ <-------------------------------------------------------------                                   ¦                            
+       ¦                                                              ¦                                   ¦                            
+       ¦                       new ice candidate                      ¦                                   ¦                            
+       ¦ ------------------------------------------------------------->                                   ¦                            
+       ¦                                                              ¦                                   ¦                            
+       ¦                                                              ¦----+                              ¦                            
+       ¦                                                              ¦    ¦ add pending ice candidate    ¦                            
+       ¦                                                              ¦<---+                              ¦                            
+       ¦                                                              ¦                                   ¦                            
+       ¦                                                              ¦        signal offer (/sdp)        ¦                            
+       ¦                                                              ¦ ---------------------------------->                            
+       ¦                                                              ¦                                   ¦                            
+       ¦                                                              ¦                                   ¦----+                       
+       ¦                                                              ¦                                   ¦    ¦ set remote description
+       ¦                                                              ¦                                   ¦<---+                       
+       ¦                                                              ¦                                   ¦                            
+       ¦                                                              ¦           signal answer           ¦                            
+       ¦                                                              ¦ <----------------------------------                            
+       ¦                                                              ¦                                   ¦                            
+       ¦                                                              ¦----+                                                           
+       ¦                                                              ¦    ¦ setRemoteDescription(pranswer)                            
+       ¦                                                              ¦<---+                                                           
+       ¦                                                              ¦                                   ¦                            
+       ¦                      setLocalDescription(pranswer), kicks off ice discovery                      ¦                            
+       ¦ <-------------------------------------------------------------------------------------------------                            
+       ¦                                                              ¦                                   ¦                            
+       ¦                                         new ice candidate    ¦                                   ¦                            
+       ¦ ------------------------------------------------------------------------------------------------->                            
+       ¦                                                              ¦                                   ¦                            
+       ¦                                                              ¦      signal ice (/candidate)      ¦                            
+       ¦                                                              ¦ <----------------------------------                            
+       ¦                                                              ¦                                   ¦                            
+       ¦                                                              ¦----+                                                           
+       ¦                                                              ¦    ¦ iterate pending ice candidates                            
+       ¦                                                              ¦<---+                                                           
+       ¦                                                              ¦                                   ¦                            
+       ¦                                                              ¦      signal ice (/candidate)      ¦                            
+       ¦                                                              ¦ ---------------------------------->                            
+     +----+                                                        +------+                            +------+                        
+     ¦stun¦                                                        ¦client¦                            ¦server¦                        
+     +----+                                                        +------+                            +------+     
+```
+
+
+```
+@startuml
+stun <- client: setLocalDescription(offer), kicks off ice candidate discovery
+stun -> client: new ice candidate
+client -> client: add pending ice candidate
+client -> server: signal offer (/sdp)
+server -> server: set remote description
+server -> client: signal answer
+client -> client: setRemoteDescription(pranswer)
+server -> stun: setLocalDescription(pranswer), kicks off ice discovery
+stun-> server: new ice candidate
+server -> client: signal ice (/candidate)
+client -> client: iterate pending ice candidates
+client -> server: signal ice (/candidate)
+@enduml
+```
+
+Note: there is a small period of time between when the client has received the pranswer and when the client has set the local description in which ICE candidates from the server may arrive. TODO: solve this
+
 ### Station
 The intercom station object is the primary point of contact for various components.
 

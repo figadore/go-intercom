@@ -197,6 +197,7 @@ func getDataChannel(peerConnection *webrtc.PeerConnection) *webrtc.DataChannel {
 	return dataChannel
 }
 
+// dataChannel.OnMessage takes a func with a message arg and no returns. this is a simple closure to give that function access to dataChannel
 func onDataChannelMessage(dataChannel *webrtc.DataChannel) func(webrtc.DataChannelMessage) {
 	return func(msg webrtc.DataChannelMessage) {
 		// log.Printf("Message from DataChannel '%s': '%s'\n", dataChannel.Label(), string(msg.Data))
@@ -204,6 +205,7 @@ func onDataChannelMessage(dataChannel *webrtc.DataChannel) func(webrtc.DataChann
 	}
 }
 
+// dataChannel.OnOpen takes a func with no args and no returns. this is a simple closure to give that function access to dataChannel
 func onDataChannelOpen(dataChannel *webrtc.DataChannel) func() {
 	return func() {
 		log.Printf("Data channel '%s'-'%d' open. Random messages will now be sent to any connected DataChannels every 5 seconds\n", dataChannel.Label(), dataChannel.ID())
