@@ -98,6 +98,7 @@ func getPeerConnection(addr string) (*webrtc.PeerConnection, *[]*webrtc.ICECandi
 		defer candidatesMux.Unlock()
 
 		// If sdp hasn't been received yet, add this candidate to the pending list
+		// TODO add mutex
 		if peerConnection.RemoteDescription() == nil {
 			log.Printf("OnICECandidate: desc is nil")
 			pendingCandidates = append(pendingCandidates, c)

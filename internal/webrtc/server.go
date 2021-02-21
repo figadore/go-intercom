@@ -54,7 +54,9 @@ func Serve(s *grpc.Server, errCh chan error) {
 
 // End boilerplate
 
-// Add ICE candidate to remote description
+// AddICECandidate adds the candidate to the peer connection's remote description
+// This is called by both ends whenever a new candidate is discovered
+// The remote description cannot be empty when this is called
 func (s *Server) AddIceCandidate(ctx context.Context, candidate *pb.IceCandidate) (*pb.IceCandidateResponse, error) {
 	log.Println("Receiving candidate signal")
 
@@ -74,6 +76,14 @@ func (s *Server) AddIceCandidate(ctx context.Context, candidate *pb.IceCandidate
 	return &response, nil
 }
 
+// SdpSignal receves an offer from the client and returns a provisional answer.
+// The peer connection object should already exist by the time this is called.
+// The remote description is set to the offer, and data channel handlers are set up.
+// The answer is returned, and *then* the local description is set, because once set,
+// it kicks off the ICE candidate discovery process, which has an event handler to signal
+// the other end (via gRPC) whenever a new candidate is found. The other end needs
+// to have its remote description set before the AddIceCandidate function is called, so
+// this order helps prevent race conditions
 func (s *Server) SdpSignal(ctx context.Context, offer *pb.SdpOffer) (*pb.SdpAnswer, error) {
 	// TODO handle pendingIceCandidates here
 	log.Println("Received SDP Offer:", offer)
@@ -125,6 +135,7 @@ func (s *Server) SdpSignal(ctx context.Context, offer *pb.SdpOffer) (*pb.SdpAnsw
 		}
 
 		log.Printf("SdpSignal: %v pendingIceCandidates", len(*s.pendingIceCandidates))
+		// TODO wrap in mutex
 		for _, c := range *s.pendingIceCandidates {
 			if onICECandidateErr := signalCandidate(s.peerAddr, c); onICECandidateErr != nil {
 				panic(onICECandidateErr)
