@@ -5,16 +5,27 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
 	//"encoding/json"
 	"fmt"
 	"log"
 	"sync"
 
+	"github.com/jfreymuth/pulse"
+	"github.com/pion/interceptor"
 	"github.com/pion/webrtc/v3"
 	"google.golang.org/grpc"
 
 	"github.com/figadore/go-intercom/internal/webrtc/pb"
 )
+
+var opusCodec = webrtc.RTPCodecCapability{
+	MimeType:     webrtc.MimeTypeOpus,
+	ClockRate:    SampleRate,
+	Channels:     channels,
+	SDPFmtpLine:  "minptime=10;useinbandfec=1",
+	RTCPFeedback: nil,
+}
 
 // signalSdp uses gRPC to send an ICE candidate to the peer
 func signalCandidate(addr string, c *webrtc.ICECandidate) error {
@@ -64,6 +75,23 @@ func signalSdp(addr string, offer *pb.SdpOffer) *pb.SdpAnswer {
 
 // Create a basic peer connection with event handlers for new ICE candidates
 func getPeerConnection(addr string) (*webrtc.PeerConnection, *[]*webrtc.ICECandidate) {
+	mediaEngine := &webrtc.MediaEngine{}
+	err := mediaEngine.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: opusCodec,
+		// PayloadType:        payloadType,
+	}, webrtc.RTPCodecTypeAudio)
+	if err != nil {
+		panic(err)
+	}
+	i := &interceptor.Registry{}
+
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(mediaEngine), webrtc.WithInterceptorRegistry(i))
+
+	// Use the default set of Interceptors
+	if err := webrtc.RegisterDefaultInterceptors(mediaEngine, i); err != nil {
+		panic(err)
+	}
+
 	// Prepare the configuration
 	config := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
@@ -74,7 +102,7 @@ func getPeerConnection(addr string) (*webrtc.PeerConnection, *[]*webrtc.ICECandi
 	}
 
 	// Create a new RTCPeerConnection
-	peerConnection, err := webrtc.NewPeerConnection(config)
+	peerConnection, err := api.NewPeerConnection(config)
 	if err != nil {
 		panic(err)
 	}
@@ -182,6 +210,15 @@ func Call(host string, s *Server) *webrtc.DataChannel {
 			panic(onICECandidateErr)
 		}
 	}
+
+	peerConnection.OnTrack(onAudioTrack(peerConnection))
+	at := createAudioTrack(peerConnection)
+	mic := Microphone{
+		AudioCh: make(chan []float32),
+		done:    make(chan struct{}),
+	}
+	log.Print("\nCreated audio track, starting recording\n\n")
+	go mic.beginRecording(at)
 	return dc
 }
 
@@ -206,20 +243,82 @@ func onDataChannelMessage(dataChannel *webrtc.DataChannel) func(webrtc.DataChann
 	}
 }
 
+func createAudioTrack(peerConnection *webrtc.PeerConnection) *webrtc.TrackLocalStaticSample {
+	// Add media track(s)
+	audioTrack, err := webrtc.NewTrackLocalStaticSample(opusCodec, "audio", "outgoing")
+	if err != nil {
+		panic(err)
+	}
+	_, err = peerConnection.AddTrack(audioTrack)
+	if err != nil {
+		panic(err)
+	}
+
+	return audioTrack
+
+	//// Read incoming RTCP packets
+	//// Before these packets are retuned they are processed by interceptors. For things
+	//// like NACK this needs to be called.
+	//go func() {
+	//	rtcpBuf := make([]byte, 1500)
+	//	for {
+	//		if _, _, rtcpErr := sender.Read(rtcpBuf); rtcpErr != nil {
+	//			return
+	//		}
+	//	}
+	//}()
+}
+
+// When the remote adds an audio track, connect it to the station speaker
+func onAudioTrack(peerConnection *webrtc.PeerConnection) func(*webrtc.TrackRemote, *webrtc.RTPReceiver) {
+	return func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+		log.Print("\nAudio track connected\n\n")
+		//  Start a goroutine to read from the track and send to the speaker
+		buffer := make([]byte, frameSize*4)
+		c, err := pulse.NewClient()
+		if err != nil {
+			panic(err)
+		}
+		defer c.Close()
+		speaker := Speaker{
+			AudioCh:  make(chan []float32),
+			buffered: make([]float32, FragmentSize),
+			done:     make(chan struct{}),
+		}
+		speakerStream, err := c.NewPlayback(pulse.Float32Reader(speaker.Read), pulse.PlaybackSampleRate(SampleRate), pulse.PlaybackBufferSize(frameSize))
+		if err != nil {
+			panic(err)
+		}
+		speakerStream.Start()
+		speakerStream.Drain()
+		go func() {
+			for {
+				_, _, err = track.Read(buffer)
+				if err != nil {
+					panic(err)
+				}
+				log.Println("onAudioTrack: track.Read filled the buffer with the following:", buffer)
+				audioData := float32Slice(buffer)
+				log.Println("onAudioTrack: data as a float32 slice (sneding to speaker's AudioCh):", audioData)
+				speaker.AudioCh <- audioData
+
+			}
+		}()
+	}
+}
+
 // dataChannel.OnOpen takes a func with no args and no returns. this is a simple closure to give that function access to dataChannel
 func onDataChannelOpen(dataChannel *webrtc.DataChannel) func() {
 	return func() {
 		log.Printf("Data channel '%s'-'%d' open. Random messages will now be sent to any connected DataChannels every 5 seconds\n", dataChannel.Label(), dataChannel.ID())
 
-		for range time.NewTicker(5 * time.Second).C {
-			message := time.Now().String()
-			log.Printf("Sending '%s'\n", message)
+		message := time.Now().String()
+		log.Printf("Sending '%s'\n", message)
 
-			// Send the message as text
-			sendTextErr := dataChannel.SendText(message)
-			if sendTextErr != nil {
-				panic(sendTextErr)
-			}
+		// Send the message as text
+		sendTextErr := dataChannel.SendText(message)
+		if sendTextErr != nil {
+			panic(sendTextErr)
 		}
 	}
 }

@@ -1,19 +1,32 @@
-package station
+package webrtc
 
 import (
-	"context"
-	"sync"
+	"log"
+	"reflect"
 	"time"
+	"unsafe"
 
 	"github.com/jfreymuth/pulse"
-
-	"github.com/figadore/go-intercom/internal/log"
+	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v3/pkg/media"
 )
 
 const (
-	FragmentSize = 1600
-	SampleRate   = 8000
+	channels      = 1
+	SampleRate    = 8000
+	frameSize     = 800
+	FragmentSize  = 1600
+	frameDuration = (time.Second / SampleRate) * frameSize
 )
+
+//// TODO make these real values
+const payloadType = 111
+
+//var audioCodec = webrtc.RTPCodecCapability{
+//	MimeType:  "audio/speex",
+//	ClockRate: 8000,
+//	Channels:  1,
+//}
 
 type Speaker struct {
 	AudioCh  chan []float32
@@ -21,62 +34,14 @@ type Speaker struct {
 	done     chan struct{}
 }
 
-func (s *Speaker) Close() {
-	close(s.AudioCh)
+func float32Slice(s []byte) []float32 {
+	h := *(*reflect.SliceHeader)(unsafe.Pointer(&s))
+	return *(*[]float32)(unsafe.Pointer(&reflect.SliceHeader{Data: h.Data, Len: h.Len / 4, Cap: h.Len / 4}))
 }
 
-func sendWithTimeout(err error, errCh chan error) {
-	select {
-	case errCh <- err:
-	case <-time.After(5 * time.Second):
-		log.Println("WARN: timeout sending error", err)
-	}
-}
-
-// startPlayback receives data from a channel and plays through the speaker
-// func (speaker *Speaker) StartPlayback(ctx context.Context, errCh chan error) { //}
-func (speaker *Speaker) StartPlayback(ctx context.Context, wg *sync.WaitGroup, errCh chan error) {
-	log.Debugln("startPlayback: enter")
-	defer log.Println("startPlayback: exit")
-	defer wg.Done()
-	c, err := pulse.NewClient()
-	if err != nil {
-		log.Println("startPlayback: error creating pulse client", err)
-		sendWithTimeout(err, errCh)
-		log.Println("startPlayback: sent error creating pulse client", err)
-		return
-	}
-	defer c.Close()
-	speakerStream, err := c.NewPlayback(pulse.Float32Reader(speaker.Read), pulse.PlaybackSampleRate(SampleRate), pulse.PlaybackBufferSize(FragmentSize))
-	if err != nil {
-		log.Println("startPlayback: error creating speaker stream", err)
-		sendWithTimeout(err, errCh)
-		log.Println("startPlayback: sent error creating speaker stream", err)
-		return
-	}
-	defer log.Println("startPlayback: speakerStream closed")
-	defer speakerStream.Close()
-	defer log.Println("startPlayback: speakerStream stopped")
-	defer speakerStream.Stop()
-	log.Debugln("startPlayback: starting speaker stream")
-	speakerStream.Start()
-	// Stream to speaker until context is cancelled
-	log.Debugln("startPlayback: waiting for cxt.Done()")
-	<-ctx.Done()
-	log.Println("startPlayback: context done:", ctx.Err())
-	// to allow Drain() to return, send pulse.EndOfData from reader. trigger this by closing the done channel
-	close(speaker.done)
-	log.Debugln("startPlayback: Draining speaker stream. This should not drain until call exit")
-	speakerStream.Drain()
-	log.Debugln("startPlayback: Drained speaker stream")
-	log.Println("Underflow:", speakerStream.Underflow())
-	if speakerStream.Error() != nil {
-		err = speakerStream.Error()
-		log.Println("startPlayback: speakerStream error", err)
-		sendWithTimeout(err, errCh)
-		log.Println("startPlayback: sent speakerStream error", err)
-		return
-	}
+func byteSlice(s []float32) []byte {
+	h := *(*reflect.SliceHeader)(unsafe.Pointer(&s))
+	return *(*[]byte)(unsafe.Pointer(&reflect.SliceHeader{Data: h.Data, Len: h.Len * 4, Cap: h.Len * 4}))
 }
 
 // Read receives data from the audio data channel and sends it to the speaker
@@ -87,6 +52,7 @@ func (speaker *Speaker) StartPlayback(ctx context.Context, wg *sync.WaitGroup, e
 // If what is already buffered isn't enough to fill buf, just copy that many
 // bytes and return. The next Read will receive from the audio channel
 func (s *Speaker) Read(buf []float32) (n int, err error) {
+	log.Println("Speaker writing")
 	select {
 	case <-s.done:
 		// close(s.audioCh)
@@ -98,7 +64,6 @@ func (s *Speaker) Read(buf []float32) (n int, err error) {
 	}
 	if len(s.buffered) == 0 {
 		// receives from the audio channel and places it in the buffer
-		// blocking
 		// TODO check for closed channel
 
 		select {
@@ -108,6 +73,7 @@ func (s *Speaker) Read(buf []float32) (n int, err error) {
 			log.Println("Speaker.Read: done channel closed2, sending EndOfData error", err)
 			return
 		case data := <-s.AudioCh:
+			log.Println("Speaker  received the following data from AudioCh:", data)
 			s.buffered = append(s.buffered, data...)
 		case <-time.After(5 * time.Second):
 			log.Println("WARN: speaker.Read: timeout receiving from speaker.AudioCh")
@@ -133,12 +99,9 @@ type Microphone struct {
 	done    chan struct{}
 }
 
-func (m *Microphone) Close() {
-	close(m.AudioCh)
-}
-
 // Write sends the data from the microphone buffer and sends it to the audio data channel
 func (m *Microphone) Write(buf []float32) (n int, err error) {
+	log.Println("Mic reading")
 	select {
 	case <-m.done:
 		// close(m.audioCh)
@@ -151,6 +114,8 @@ func (m *Microphone) Write(buf []float32) (n int, err error) {
 
 	select {
 	case m.AudioCh <- data:
+		log.Println("Mic sending the following data to AudioCh:", data)
+		return n, pulse.EndOfData
 	case <-m.done:
 		// close(m.audioCh)
 		return n, pulse.EndOfData
@@ -163,25 +128,17 @@ func (m *Microphone) Write(buf []float32) (n int, err error) {
 }
 
 // startRecording gets data from the microphone and sends it to the audio channel
-func (mic *Microphone) StartRecording(ctx context.Context, wg *sync.WaitGroup, errCh chan error) {
+func (mic *Microphone) beginRecording(audioTrack *webrtc.TrackLocalStaticSample) {
 	log.Println("startRecording: enter")
 	defer log.Println("startRecording: exit")
-	defer wg.Done()
 	c, err := pulse.NewClient()
 	if err != nil {
-		log.Println("startRecording: error creating pulse client", err)
-		sendWithTimeout(err, errCh)
-		log.Println("startRecording: sent error creating pulse client", err)
-		return
+		panic(err)
 	}
 	defer c.Close()
 	micStream, err := c.NewRecord(pulse.Float32Writer(mic.Write), pulse.RecordSampleRate(SampleRate), pulse.RecordBufferFragmentSize(FragmentSize))
 	if err != nil {
-		log.Println("startRecording: error creating new recorder", err)
-		sendWithTimeout(err, errCh)
-		log.Println("startRecording: sent error creating new recorder", err)
-		return
-
+		panic(err)
 	}
 	log.Println("startRecording: created mic stream")
 	defer log.Println("startRecording: micStream closed")
@@ -191,12 +148,20 @@ func (mic *Microphone) StartRecording(ctx context.Context, wg *sync.WaitGroup, e
 	log.Println("startRecording: starting mic stream")
 	micStream.Start() // async
 	log.Println("startRecording: started mic stream, waiting for ctx.Done()")
+	for i := 0; i < 11; i++ {
+		audioData := <-mic.AudioCh
+		log.Println("Received the following data from mic's AudioCh:", audioData)
+		audioBytes := byteSlice(audioData)
+		log.Println("Mic's data as a byteslice:", audioBytes)
+		err = audioTrack.WriteSample(media.Sample{
+			Data:     audioBytes,
+			Duration: frameDuration,
+		})
+		if err != nil {
+			panic(err)
+		}
+	}
 	// Record until call ends
-	<-ctx.Done()
-	log.Println("startRecording: context done with error:", ctx.Err())
-	log.Println("startRecording: closing mic.done channel")
-	close(mic.done)
-	log.Println("startRecording: closed mic.done channel")
 	//if err != nil {
 	//	//log.Println("startRecording: sending error", err)
 	//	//errCh <- err

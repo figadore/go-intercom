@@ -9,6 +9,7 @@ require (
 	github.com/jar-o/limlog v0.0.0-20200826200915-9d66a36febe9
 	github.com/jfreymuth/pulse v0.1.0
 	github.com/joho/godotenv v1.3.0
+	github.com/pion/interceptor v0.0.9
 	github.com/pion/webrtc/v3 v3.0.11
 	github.com/rs/xid v1.2.1
 	github.com/securego/gosec/v2 v2.6.1 // indirect

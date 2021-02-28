@@ -114,6 +114,8 @@ func (s *Server) SdpSignal(ctx context.Context, offer *pb.SdpOffer) (*pb.SdpAnsw
 		d.OnMessage(onDataChannelMessage(d))
 	})
 
+	peerConnection.OnTrack(onAudioTrack(peerConnection))
+
 	// Create an answer (SDP) to send to the other end
 	pranswer, err := peerConnection.CreateAnswer(nil)
 	log.Println("created provisional answer:", pranswer)
