@@ -4,15 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-	"time"
+
 	//"encoding/json"
 	"fmt"
-	"log"
 	"sync"
 
+	"github.com/joho/godotenv"
 	"github.com/pion/webrtc/v3"
 	"google.golang.org/grpc"
 
+	"github.com/figadore/go-intercom/internal/log"
+	"github.com/figadore/go-intercom/internal/station"
 	"github.com/figadore/go-intercom/internal/webrtc/pb"
 )
 
@@ -24,7 +26,8 @@ func signalCandidate(addr string, c *webrtc.ICECandidate) error {
 	opts = append(opts, grpc.WithBlock())
 	conn, err := grpc.Dial(addr, opts...)
 	if err != nil {
-		log.Fatalf("fail to dial: %v", err)
+		log.Printf("fail to dial: %v", err)
+		return err
 	}
 	defer conn.Close()
 	client := pb.NewWebRtcClient(conn)
@@ -187,7 +190,13 @@ func Call(host string, s *Server) *webrtc.DataChannel {
 
 func getDataChannel(peerConnection *webrtc.PeerConnection) *webrtc.DataChannel {
 	// Create a datachannel with label 'data'
-	dataChannel, err := peerConnection.CreateDataChannel("data", nil) // TODO set options to allow unordered?
+	ordered := false
+	// time in milliseconds in which packet can live
+	packetLifetime := uint16(100)
+	dataChannel, err := peerConnection.CreateDataChannel("data", &webrtc.DataChannelInit{
+		Ordered:           &ordered,
+		MaxPacketLifeTime: &packetLifetime,
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -208,18 +217,15 @@ func onDataChannelMessage(dataChannel *webrtc.DataChannel) func(webrtc.DataChann
 
 // dataChannel.OnOpen takes a func with no args and no returns. this is a simple closure to give that function access to dataChannel
 func onDataChannelOpen(dataChannel *webrtc.DataChannel) func() {
+	parentContext, cancel := context.WithCancel(context.Background())
+	dotEnv, err := godotenv.Read()
+	if err != nil {
+		panic(err)
+	}
+	intercom := station.New(parentContext, dotEnv, NewCallManager)
+	callManager := intercom.CallManager.(*webrtcCallManager)
 	return func() {
-		log.Printf("Data channel '%s'-'%d' open. Random messages will now be sent to any connected DataChannels every 5 seconds\n", dataChannel.Label(), dataChannel.ID())
-
-		for range time.NewTicker(5 * time.Second).C {
-			message := time.Now().String()
-			log.Printf("Sending '%s'\n", message)
-
-			// Send the message as text
-			sendTextErr := dataChannel.SendText(message)
-			if sendTextErr != nil {
-				panic(sendTextErr)
-			}
-		}
+		log.Printf("Data channel '%s'-'%d' open. Sending data from mic\n", dataChannel.Label(), dataChannel.ID())
+		callManager.duplexCall(parentContext, cancel, dataChannel)
 	}
 }

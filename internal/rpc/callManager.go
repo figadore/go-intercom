@@ -95,9 +95,9 @@ func (callManager *grpcCallManager) duplexCall(parentContext context.Context, fr
 		return errors.New(msg)
 	}
 	c.Status = call.StatusActive
-	callManager.station.Status.Set(station.StatusCallConnected)
-	callManager.station.Status.Clear(station.StatusOutgoingCall)
-	callManager.station.Status.Clear(station.StatusIncomingCall)
+	intercom.Status.Set(station.StatusCallConnected)
+	intercom.Status.Clear(station.StatusOutgoingCall)
+	intercom.Status.Clear(station.StatusIncomingCall)
 	go callManager.startSending(callContext, &wg, errCh, stream.Send)
 	go callManager.startReceiving(callContext, &wg, errCh, stream.Recv)
 	go intercom.StartRecording(callContext, &wg, errCh)
