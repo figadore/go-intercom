@@ -116,7 +116,8 @@ func (s *Speaker) Read(buf []float32) (n int, err error) {
 		}
 	}
 	// Copies as much as possible, based on smaller of the two slices
-	copy(buf, s.buffered)
+	adjusted := volume(s.buffered)
+	copy(buf, adjusted)
 	if len(s.buffered) >= len(buf) {
 		n = len(buf)
 	} else {
@@ -126,6 +127,14 @@ func (s *Speaker) Read(buf []float32) (n int, err error) {
 	// Save the rest for the next call to Read
 	s.buffered = s.buffered[n:]
 	return
+}
+
+func volume(buf []float32) []float32 {
+	adjusted := make([]float32, len(buf))
+	for i, sample := range buf {
+		adjusted[i] = sample / 2
+	}
+	return adjusted
 }
 
 type Microphone struct {

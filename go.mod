@@ -10,6 +10,7 @@ require (
 	github.com/jfreymuth/pulse v0.1.0
 	github.com/joho/godotenv v1.3.0
 	github.com/pion/webrtc/v3 v3.0.11
+	github.com/pkg/profile v1.5.0
 	github.com/rs/xid v1.2.1
 	github.com/securego/gosec/v2 v2.6.1 // indirect
 	github.com/stretchr/testify v1.7.0 // indirect

@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/pprof"
 	"syscall"
 
 	"github.com/figadore/go-intercom/internal/webrtc"
@@ -12,7 +14,22 @@ import (
 	"github.com/figadore/go-intercom/internal/log"
 )
 
+var cpuprofile = flag.String("cpuprofile", "", "write cpu profile to `file`")
+
 func run(args []string) int {
+	// start cpu profiling
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Println("could not create CPU profile: ", err)
+		}
+		defer f.Close() // error handling omitted for example
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Println("could not start CPU profile: ", err)
+		}
+		defer pprof.StopCPUProfile()
+	}
+
 	// Enable global debug logs
 	log.EnableDebug()
 	sigCh := make(chan os.Signal, 2)
