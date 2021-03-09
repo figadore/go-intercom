@@ -8,7 +8,7 @@ run `./deploy.sh <host>` to copy the binaries to the device
 
 ## Run
 ### Setup
-copy <repo>/.env.dist to <remote>:<dir>.env (currently only works with run.sh if at root of home)
+copy <repo>/.env.dist to `<remote>:<dir>.env` (currently only works with run.sh if at root of home)
 
 set variables in .env in the directory where binaries are deployed (see github.com/joho/godotenv)
 
@@ -50,49 +50,49 @@ On both the client and the server, when an ICE candidate is found, the OnICECand
 
 ```
      +----+                                                        +------+                            +------+                        
-     ¦stun¦                                                        ¦client¦                            ¦server¦                        
+     Â¦stunÂ¦                                                        Â¦clientÂ¦                            Â¦serverÂ¦                        
      +----+                                                        +------+                            +------+                        
-       ¦ setLocalDescription(offer), kicks off ice candidate discovery¦                                   ¦                            
-       ¦ <-------------------------------------------------------------                                   ¦                            
-       ¦                                                              ¦                                   ¦                            
-       ¦                       new ice candidate                      ¦                                   ¦                            
-       ¦ ------------------------------------------------------------->                                   ¦                            
-       ¦                                                              ¦                                   ¦                            
-       ¦                                                              ¦----+                              ¦                            
-       ¦                                                              ¦    ¦ add pending ice candidate    ¦                            
-       ¦                                                              ¦<---+                              ¦                            
-       ¦                                                              ¦                                   ¦                            
-       ¦                                                              ¦        signal offer (/sdp)        ¦                            
-       ¦                                                              ¦ ---------------------------------->                            
-       ¦                                                              ¦                                   ¦                            
-       ¦                                                              ¦                                   ¦----+                       
-       ¦                                                              ¦                                   ¦    ¦ set remote description
-       ¦                                                              ¦                                   ¦<---+                       
-       ¦                                                              ¦                                   ¦                            
-       ¦                                                              ¦           signal answer           ¦                            
-       ¦                                                              ¦ <----------------------------------                            
-       ¦                                                              ¦                                   ¦                            
-       ¦                                                              ¦----+                                                           
-       ¦                                                              ¦    ¦ setRemoteDescription(pranswer)                            
-       ¦                                                              ¦<---+                                                           
-       ¦                                                              ¦                                   ¦                            
-       ¦                      setLocalDescription(pranswer), kicks off ice discovery                      ¦                            
-       ¦ <-------------------------------------------------------------------------------------------------                            
-       ¦                                                              ¦                                   ¦                            
-       ¦                                         new ice candidate    ¦                                   ¦                            
-       ¦ ------------------------------------------------------------------------------------------------->                            
-       ¦                                                              ¦                                   ¦                            
-       ¦                                                              ¦      signal ice (/candidate)      ¦                            
-       ¦                                                              ¦ <----------------------------------                            
-       ¦                                                              ¦                                   ¦                            
-       ¦                                                              ¦----+                                                           
-       ¦                                                              ¦    ¦ iterate pending ice candidates                            
-       ¦                                                              ¦<---+                                                           
-       ¦                                                              ¦                                   ¦                            
-       ¦                                                              ¦      signal ice (/candidate)      ¦                            
-       ¦                                                              ¦ ---------------------------------->                            
+       Â¦ setLocalDescription(offer), kicks off ice candidate discoveryÂ¦                                   Â¦                            
+       Â¦ <-------------------------------------------------------------                                   Â¦                            
+       Â¦                                                              Â¦                                   Â¦                            
+       Â¦                       new ice candidate                      Â¦                                   Â¦                            
+       Â¦ ------------------------------------------------------------->                                   Â¦                            
+       Â¦                                                              Â¦                                   Â¦                            
+       Â¦                                                              Â¦----+                              Â¦                            
+       Â¦                                                              Â¦    Â¦ add pending ice candidate    Â¦                            
+       Â¦                                                              Â¦<---+                              Â¦                            
+       Â¦                                                              Â¦                                   Â¦                            
+       Â¦                                                              Â¦        signal offer (/sdp)        Â¦                            
+       Â¦                                                              Â¦ ---------------------------------->                            
+       Â¦                                                              Â¦                                   Â¦                            
+       Â¦                                                              Â¦                                   Â¦----+                       
+       Â¦                                                              Â¦                                   Â¦    Â¦ set remote description
+       Â¦                                                              Â¦                                   Â¦<---+                       
+       Â¦                                                              Â¦                                   Â¦                            
+       Â¦                                                              Â¦           signal answer           Â¦                            
+       Â¦                                                              Â¦ <----------------------------------                            
+       Â¦                                                              Â¦                                   Â¦                            
+       Â¦                                                              Â¦----+                                                           
+       Â¦                                                              Â¦    Â¦ setRemoteDescription(pranswer)                            
+       Â¦                                                              Â¦<---+                                                           
+       Â¦                                                              Â¦                                   Â¦                            
+       Â¦                      setLocalDescription(pranswer), kicks off ice discovery                      Â¦                            
+       Â¦ <-------------------------------------------------------------------------------------------------                            
+       Â¦                                                              Â¦                                   Â¦                            
+       Â¦                                         new ice candidate    Â¦                                   Â¦                            
+       Â¦ ------------------------------------------------------------------------------------------------->                            
+       Â¦                                                              Â¦                                   Â¦                            
+       Â¦                                                              Â¦      signal ice (/candidate)      Â¦                            
+       Â¦                                                              Â¦ <----------------------------------                            
+       Â¦                                                              Â¦                                   Â¦                            
+       Â¦                                                              Â¦----+                                                           
+       Â¦                                                              Â¦    Â¦ iterate pending ice candidates                            
+       Â¦                                                              Â¦<---+                                                           
+       Â¦                                                              Â¦                                   Â¦                            
+       Â¦                                                              Â¦      signal ice (/candidate)      Â¦                            
+       Â¦                                                              Â¦ ---------------------------------->                            
      +----+                                                        +------+                            +------+                        
-     ¦stun¦                                                        ¦client¦                            ¦server¦                        
+     Â¦stunÂ¦                                                        Â¦clientÂ¦                            Â¦serverÂ¦                        
      +----+                                                        +------+                            +------+     
 ```
 
